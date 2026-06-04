@@ -17,7 +17,7 @@
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 const SUBJECTS = ["Anatomy","Physiology","Biochemistry","Pathology","Pharmacology","Microbiology","Forensic Medicine","Community Medicine","ENT","Ophthalmology","Medicine","Surgery","Obstetrics","Gynaecology","Pediatrics","Orthopedics","Radiology","Anesthesia","Psychiatry"];
-const HOURS = Array.from({length:24},(_,i)=>`${String(i).padStart(2,"0")}:00`);
+const HOURS = Array.from({length:24},(_,i)=>`${String(i).padStart(2,"0")}:00 to ${String((i+1)%24).padStart(2,"0")}:00`);
 const SOURCE_TYPES = ["Textbook","BTR Notes","Handwritten Notes","Slides/PDF","Video Notes","Revision Notes"];
 const getToday = () => new Date().toISOString().split("T")[0];
 const TABS = ["📅 Daily Log","📖 Reading","🧪 QBank","📊 Reports","⚙️ Settings"];
@@ -80,7 +80,7 @@ function App() {
   const [rdFromPage, setRdFromPage] = useState("");
   const [rdToPage, setRdToPage] = useState("");
   const [rdVideoHours, setRdVideoHours] = useState(""); // NEW: video hours instead of topic
-  const [rdNotes, setRdNotes] = useState("");
+  const [rdFlashcards, setRdFlashcards] = useState("");
   const [rdRating, setRdRating] = useState("3");
 
   const [qbankData, setQbankData] = useState(() => { try { return JSON.parse(localStorage.getItem("qbank_data") || "{}"); } catch { return {}; } });
@@ -159,22 +159,15 @@ ${readSummary}
 Student's current avg: ${avgPages} pages/day, ${avgVids} video hrs/day
 Days tracked: ${daysTracked}
 
-Suggest ONE subject to focus on TOMORROW considering:
-1. Which subject hasn't been studied recently
-2. NEET PG weightage
-3. Progressive difficulty
+Give ONLY numeric targets for tomorrow. Do NOT suggest any subject.
 
-Reply in STRICT format (nothing else):
-SUBJECT: [subject name]
-WHY: [1 line reason, Hindi/English mix ok]
+Reply in STRICT format (nothing else, no extra text):
 TARGET_PAGES: ${targetPages}
 TARGET_VIDEO_HRS: ${targetVids}
 TIP: [1 motivational line in Hindi]`;
       const raw = await callAI(prompt);
       const parse = (key) => { const m = raw.match(new RegExp(key + ":\\s*(.+)")); return m ? m[1].trim() : ""; };
       setTomorrowTarget({
-        subject: parse("SUBJECT"),
-        why: parse("WHY"),
         pages: parse("TARGET_PAGES") || String(targetPages),
         videoHrs: parse("TARGET_VIDEO_HRS") || String(targetVids),
         tip: parse("TIP"),
@@ -192,10 +185,11 @@ TIP: [1 motivational line in Hindi]`;
       fromPage: rdFromPage ? +rdFromPage : null,
       toPage: rdToPage ? +rdToPage : null,
       videoHours: rdVideoHours ? +rdVideoHours : 0, // NEW
-      notes: rdNotes.trim(), rating: +rdRating
+      flashcards: rdFlashcards ? +rdFlashcards : 0,
+      rating: +rdRating
     };
     setReadingData(prev => ({ ...prev, [rdDate]: [...(prev[rdDate] || []), entry] }));
-    setRdPages(""); setRdFromPage(""); setRdToPage(""); setRdVideoHours(""); setRdNotes(""); setRdRating("3");
+    setRdPages(""); setRdFromPage(""); setRdToPage(""); setRdVideoHours(""); setRdFlashcards(""); setRdRating("3");
   };
   const deleteReadingEntry = (date, id) => setReadingData(prev => ({ ...prev, [date]: (prev[date] || []).filter(e => e.id !== id) }));
 
@@ -532,15 +526,13 @@ Max 45 lines. Hindi/English mix.`;
         {tomorrowTarget && (
           <div style={{ ...s.card, background: "linear-gradient(135deg,#0d1a0d,#0a0a1e)", border: "1px solid #1a4a1a" }}>
             <label style={{ ...s.lbl, color: "#4ade80" }}>🎯 KAL KA TARGET – {tomorrowTarget.date}</label>
-            <div style={{ fontSize: "18px", fontWeight: 700, color: "#4ade80", marginBottom: "4px" }}>{tomorrowTarget.subject}</div>
-            <div style={{ fontSize: "11px", color: "#5a8a5a", marginBottom: "10px" }}>{tomorrowTarget.why}</div>
             <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
               <div style={{ flex: 1, background: "#070f07", border: "1px solid #1a3a1a", borderRadius: "8px", padding: "10px", textAlign: "center" }}>
-                <div style={{ fontSize: "22px", fontWeight: 700, color: "#4ade80" }}>{tomorrowTarget.pages}</div>
+                <div style={{ fontSize: "28px", fontWeight: 700, color: "#4ade80" }}>{tomorrowTarget.pages}</div>
                 <div style={{ fontSize: "9px", color: "#3a6a3a" }}>PAGES TARGET</div>
               </div>
               <div style={{ flex: 1, background: "#070714", border: "1px solid #1a1a3a", borderRadius: "8px", padding: "10px", textAlign: "center" }}>
-                <div style={{ fontSize: "22px", fontWeight: 700, color: "#60a5fa" }}>{tomorrowTarget.videoHrs}</div>
+                <div style={{ fontSize: "28px", fontWeight: 700, color: "#60a5fa" }}>{tomorrowTarget.videoHrs}</div>
                 <div style={{ fontSize: "9px", color: "#3a5a8a" }}>VIDEO HRS</div>
               </div>
             </div>
@@ -551,7 +543,7 @@ Max 45 lines. Hindi/English mix.`;
         <div style={s.card}>
           <label style={s.lbl}>⏰ Hourly Log (00:00 – 23:00)</label>
           <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
-            {HOURS.map(h => <div key={h} style={s.hrRow}><div style={s.hrBadge(!!dayLog[h]?.trim())}>{h}</div><input style={s.inp} placeholder={`${h} – kya kiya?`} value={dayLog[h] || ""} onChange={e => updateHourLog(h, e.target.value)} /></div>)}
+            {HOURS.map(h => <div key={h} style={s.hrRow}><div style={s.hrBadge(!!dayLog[h]?.trim())}>{h.slice(0,5)}</div><input style={s.inp} placeholder={`${h} – kya kiya?`} value={dayLog[h] || ""} onChange={e => updateHourLog(h, e.target.value)} /></div>)}
           </div>
         </div>
 
@@ -607,7 +599,7 @@ Max 45 lines. Hindi/English mix.`;
               <span style={{ fontSize: "11px", color: "#5a6880", alignSelf: "center", marginLeft: "4px" }}>({rdRating}/5)</span>
             </div>
           </div>
-          <div style={{ marginBottom: "10px" }}><label style={s.lbl}>Notes</label><textarea placeholder="Important points, doubts..." value={rdNotes} onChange={e => setRdNotes(e.target.value)} style={s.ta} /></div>
+          <div style={{ marginBottom: "10px" }}><label style={s.lbl}>🃏 Flashcards Solved</label><input type="number" min="0" placeholder="20" value={rdFlashcards} onChange={e => setRdFlashcards(e.target.value)} style={s.inp} /></div>
           <button style={s.btn("green")} onClick={addReadingEntry}>📖 Session Save Karo</button>
         </div>
 
@@ -624,7 +616,7 @@ Max 45 lines. Hindi/English mix.`;
             </div>
             {e.fromPage && e.toPage && <div style={{ fontSize: "12px", color: "#7a8aa8", marginTop: "2px" }}>p.{e.fromPage}–{e.toPage}</div>}
             <div style={{ fontSize: "11px", color: "#4a5a40", marginTop: "3px" }}>{"⭐".repeat(e.rating)}{"☆".repeat(5 - e.rating)}</div>
-            {e.notes && <div style={{ fontSize: "11px", color: "#4a5a70", marginTop: "4px" }}>{e.notes}</div>}
+            {e.flashcards > 0 && <div style={{ fontSize: "11px", color: "#f59e0b", marginTop: "4px" }}>🃏 {e.flashcards} flashcards solved</div>}
           </div>)}
         </div>}
 
