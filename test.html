@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Gemini API Test</title>
+<style>
+body{background:#0a0a12;color:#e8e0f0;font-family:monospace;padding:20px;}
+input{width:100%;padding:10px;background:#070714;border:1px solid #333;color:#fff;border-radius:8px;font-family:monospace;margin:8px 0;box-sizing:border-box;}
+button{padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;width:100%;margin:6px 0;}
+#result{background:#05050f;border:1px solid #201545;border-radius:10px;padding:14px;margin-top:12px;white-space:pre-wrap;color:#c4b5fd;min-height:60px;font-size:13px;}
+.err{color:#f87171;}
+.ok{color:#4ade80;}
+label{font-size:11px;color:#5a6880;text-transform:uppercase;letter-spacing:1px;}
+</style>
+</head>
+<body>
+<h2 style="color:#a78bfa">🔑 Gemini API Test</h2>
+<p style="font-size:12px;color:#5a6880;margin-bottom:16px">Pehle yahan test karo, phir MedTracker mein same key daalo</p>
+
+<label>Gemini API Key (aistudio.google.com/apikey se lo)</label>
+<input type="password" id="key" placeholder="AIzaSy..." />
+
+<button onclick="saveKey()">💾 Key Save Karo (localStorage)</button>
+<button onclick="testAPI()">🧪 Test Karo – AI Call</button>
+<button onclick="clearKey()">🗑️ Key Clear</button>
+
+<div id="result">Result yahan aayega...</div>
+
+<script>
+// Load saved key
+document.getElementById('key').value = localStorage.getItem('gemini_key') || '';
+
+function saveKey(){
+  const k = document.getElementById('key').value.trim();
+  if(!k){alert('Key daalo pehle!');return;}
+  localStorage.setItem('gemini_key', k);
+  document.getElementById('result').innerHTML = '<span class="ok">✅ Key saved! Ab "Test Karo" dabao.</span>';
+}
+
+function clearKey(){
+  localStorage.removeItem('gemini_key');
+  document.getElementById('key').value = '';
+  document.getElementById('result').textContent = '🗑️ Key cleared.';
+}
+
+async function testAPI(){
+  const key = localStorage.getItem('gemini_key') || document.getElementById('key').value.trim();
+  if(!key){
+    document.getElementById('result').innerHTML = '<span class="err">❌ Pehle key daalo aur Save karo!</span>';
+    return;
+  }
+  document.getElementById('result').textContent = '⏳ API call ho rahi hai...';
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+      { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({contents:[{parts:[{text:'Say "API working!" in Hindi in 1 line.'}]}]})
+      }
+    );
+    const data = await res.json();
+    if(data.error) throw new Error(JSON.stringify(data.error));
+    const text = data.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('') || 'No response';
+    document.getElementById('result').innerHTML = '<span class="ok">✅ API KAM KAR RAHI HAI!\n\n</span>' + text;
+    // Also save to medtracker key
+    localStorage.setItem('gemini_key', key);
+  } catch(e){
+    document.getElementById('result').innerHTML = '<span class="err">❌ Error: ' + e.message + '\n\nCheck karo:\n1. Key sahi hai?\n2. Key mein spaces toh nahi?\n3. Internet on hai?\n4. Key ko aistudio.google.com/apikey se dobara copy karo</span>';
+  }
+}
+</script>
+</body>
+</html>
