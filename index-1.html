@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MedTracker Pro – MBBS Study System</title>
+<link rel="manifest" href="manifest.json"/>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#0a0a12;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+const SUBJECTS = ["Anatomy","Physiology","Biochemistry","Pathology","Pharmacology","Microbiology","Forensic Medicine","Community Medicine","ENT","Ophthalmology","Medicine","Surgery","Obstetrics","Gynaecology","Pediatrics","Orthopedics","Radiology","Anesthesia","Psychiatry"];
+const HOURS = Array.from({length:24},(_,i)=>`${String(i).padStart(2,"0")}:00`);
+const SOURCE_TYPES = ["Textbook","BTR Notes","Handwritten Notes","Slides/PDF","Video Notes","Revision Notes"];
+const getToday = () => new Date().toISOString().split("T")[0];
+const TABS = ["📅 Daily Log","📖 Reading","🧪 QBank","📊 Reports","⚙️ Settings"];
+
+function App() {
+  const [tab, setTab] = useState(0);
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("gemini_key") || "");
+  const [apiKeyInput, setApiKeyInput] = useState(() => localStorage.getItem("gemini_key") || "");
+  const [logs, setLogs] = useState(() => { try { return JSON.parse(localStorage.getItem("daily_logs") || "{}"); } catch { return {}; } });
+  const [selectedDate, setSelectedDate] = useState(getToday());
+  const [aiAnalysis, setAiAnalysis] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [readingData, setReadingData] = useState(() => { try { return JSON.parse(localStorage.getItem("reading_data") || "{}"); } catch { return {}; } });
+  const [rdDate, setRdDate] = useState(getToday());
+  const [rdSubject, setRdSubject] = useState(SUBJECTS[0]);
+  const [rdTopic, setRdTopic] = useState("");
+  const [rdSource, setRdSource] = useState(SOURCE_TYPES[1]);
+  const [rdPages, setRdPages] = useState("");
+  const [rdFromPage, setRdFromPage] = useState("");
+  const [rdToPage, setRdToPage] = useState("");
+  const [rdNotes, setRdNotes] = useState("");
+  const [rdRating, setRdRating] = useState("3");
+  const [qbankData, setQbankData] = useState(() => { try { return JSON.parse(localStorage.getItem("qbank_data") || "{}"); } catch { return {}; } });
+  const [qbankDate, setQbankDate] = useState(getToday());
+  const [qbankSubject, setQbankSubject] = useState(SUBJECTS[0]);
+  const [qbankTopic, setQbankTopic] = useState("");
+  const [qTotal, setQTotal] = useState("");
+  const [qWrong, setQWrong] = useState("");
+  const [qNotes, setQNotes] = useState("");
+  const [screenshotAnalysis, setScreenshotAnalysis] = useState("");
+  const [ssLoading, setSsLoading] = useState(false);
+  const fileRef = useRef();
+  const [reportType, setReportType] = useState("daily");
+  const [reportOutput, setReportOutput] = useState("");
+  const [reportLoading, setReportLoading] = useState(false);
+
+  useEffect(() => localStorage.setItem("daily_logs", JSON.stringify(logs)), [logs]);
+  useEffect(() => localStorage.setItem("qbank_data", JSON.stringify(qbankData)), [qbankData]);
+  useEffect(() => localStorage.setItem("reading_data", JSON.stringify(readingData)), [readingData]);
+
+  const saveApiKey = () => { localStorage.setItem("gemini_key", apiKeyInput); setApiKey(apiKeyInput); alert("✅ API Key saved!"); };
+  const updateHourLog = (hour, val) => setLogs(prev => ({ ...prev, [selectedDate]: { ...(prev[selectedDate] || {}), [hour]: val } }));
+  const getDayLogs = (date) => logs[date] || {};
+
+  const callAI = async (prompt, images = []) => {
+    const key = localStorage.getItem("gemini_key") || "";
+    if (!key) throw new Error("⚠️ Gemini API Key nahi hai! Settings tab mein jaake key daalo. Free key: aistudio.google.com/apikey");
+    const parts = [];
+    for (const img of images) {
+      if (img.source && img.source.data) {
+        parts.push({ inline_data: { mime_type: img.source.media_type, data: img.source.data } });
+      }
+    }
+    parts.push({ text: prompt });
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts }] }) }
+    );
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "No response";
+  };
+
+  const addReadingEntry = () => {
+    if (!rdTopic.trim() || !rdPages) { alert("Topic aur Pages fields bharo!"); return; }
+    const entry = { id: Date.now(), date: rdDate, subject: rdSubject, topic: rdTopic.trim(), source: rdSource, pages: +rdPages, fromPage: rdFromPage ? +rdFromPage : null, toPage: rdToPage ? +rdToPage : null, notes: rdNotes.trim(), rating: +rdRating };
+    setReadingData(prev => ({ ...prev, [rdDate]: [...(prev[rdDate] || []), entry] }));
+    setRdTopic(""); setRdPages(""); setRdFromPage(""); setRdToPage(""); setRdNotes(""); setRdRating("3");
+  };
+  const deleteReadingEntry = (date, id) => setReadingData(prev => ({ ...prev, [date]: (prev[date] || []).filter(e => e.id !== id) }));
+
+  const getReadingStats = () => {
+    const all = Object.values(readingData).flat();
+    const bySubject = {};
+    all.forEach(e => { if (!bySubject[e.subject]) bySubject[e.subject] = { pages: 0, sessions: 0, sources: {} }; bySubject[e.subject].pages += e.pages; bySubject[e.subject].sessions += 1; bySubject[e.subject].sources[e.source] = (bySubject[e.subject].sources[e.source] || 0) + 1; });
+    return { bySubject, totalPages: all.reduce((s, e) => s + e.pages, 0), totalSessions: all.length };
+  };
+
+  const getReadingSummaryForReport = (days = null) => {
+    let entries = Object.values(readingData).flat();
+    if (days) { const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days); entries = entries.filter(e => new Date(e.date) >= cutoff); }
+    const bySubject = {};
+    entries.forEach(e => { if (!bySubject[e.subject]) bySubject[e.subject] = { pages: 0, sessions: 0, topics: [] }; bySubject[e.subject].pages += e.pages; bySubject[e.subject].sessions += 1; bySubject[e.subject].topics.push(e.topic); });
+    return Object.entries(bySubject).map(([s, d]) => `${s}: ${d.pages} pages, ${d.sessions} sessions, Topics: ${[...new Set(d.topics)].join(", ")}`).join("\n") || "No reading data";
+  };
+
+  const analyseDay = async () => {
+    const dayLog = getDayLogs(selectedDate);
+    const filled = Object.entries(dayLog).filter(([, v]) => v?.trim());
+    if (!filled.length) { alert("Pehle kuch activities log karo!"); return; }
+    setAiLoading(true); setAiAnalysis("");
+    try {
+      const logText = filled.map(([h, v]) => `${h} – ${v}`).join("\n");
+      const readToday = (readingData[selectedDate] || []).map(e => `${e.subject}/${e.topic}: ${e.pages}pg (${e.source})`).join("\n") || "No reading logged";
+      const prompt = `You are a strict but caring MBBS study coach. Analyse this student's day – ${selectedDate}:\n\nHOURLY LOG:\n${logText}\n\nREADING TODAY:\n${readToday}\n\nGive:\n1. 🕐 Time wasted (which hours & why)\n2. 📚 Study efficiency score /10\n3. 📖 Reading pace assessment\n4. 💡 3 specific improvements for tomorrow\n5. 🎯 MBBS 19-subject alignment tips\nBe concise, Hindi/English mix.`;
+      setAiAnalysis(await callAI(prompt));
+    } catch (e) { setAiAnalysis("❌ Error: " + e.message); }
+    setAiLoading(false);
+  };
+
+  const addQBankEntry = () => {
+    if (!qbankTopic.trim() || !qTotal || qWrong === "") { alert("Topic, Total aur Wrong fields bharo!"); return; }
+    const entry = { date: qbankDate, subject: qbankSubject, topic: qbankTopic.trim(), total: +qTotal, wrong: +qWrong, notes: qNotes.trim(), id: Date.now() };
+    setQbankData(prev => ({ ...prev, [qbankDate]: [...(prev[qbankDate] || []), entry] }));
+    setQbankTopic(""); setQTotal(""); setQWrong(""); setQNotes("");
+  };
+  const deleteQBankEntry = (date, id) => setQbankData(prev => ({ ...prev, [date]: (prev[date] || []).filter(e => e.id !== id) }));
+
+  const analyseScreenshots = async (files) => {
+    if (!files.length) return;
+    setSsLoading(true); setScreenshotAnalysis("");
+    try {
+      const imgs = await Promise.all(Array.from(files).map(f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res({ type: "image", source: { type: "base64", media_type: f.type, data: r.result.split(",")[1] } }); r.onerror = rej; r.readAsDataURL(f); })));
+      const prompt = `These are screenshots of wrong QBank answers from an MBBS student.\nAnalyse ALL and provide:\n1. Subject & Topic for each wrong question\n2. Pattern of mistakes\n3. Summary table: Subject | Topic | # Mistakes\n4. Top 3 priority topics to revise\n5. Quick revision tip per weak topic\nHindi/English mix ok.`;
+      const text = await callAI(prompt, imgs);
+      setScreenshotAnalysis(text);
+      const today = getToday();
+      setQbankData(prev => ({ ...prev, [today]: [...(prev[today] || []), { date: today, subject: "Mixed (SS)", topic: `Screenshot Batch – ${files.length} imgs`, total: files.length, wrong: files.length, notes: text.substring(0, 300), id: Date.now() }] }));
+    } catch (e) { setScreenshotAnalysis("❌ Error: " + e.message); }
+    setSsLoading(false);
+  };
+
+  const generateReport = async () => {
+    setReportLoading(true); setReportOutput("");
+    try {
+      const today = getToday(); let prompt = "";
+      if (reportType === "daily") {
+        const dayLog = getDayLogs(today), qToday = qbankData[today] || [], rdToday = readingData[today] || [];
+        const logText = Object.entries(dayLog).filter(([, v]) => v?.trim()).map(([h, v]) => `${h}: ${v}`).join("\n") || "No hourly logs";
+        const qText = qToday.map(e => `${e.subject}/${e.topic}: ${e.wrong}/${e.total} wrong`).join("\n") || "No QBank today";
+        const rdText = rdToday.map(e => `${e.subject}/${e.topic}: ${e.pages}pg from ${e.source} [rating:${e.rating}/5]`).join("\n") || "No reading today";
+        prompt = `DAILY REPORT for MBBS student – ${today}\n\nHOURLY LOG:\n${logText}\n\nREADING (Total: ${rdToday.reduce((s, e) => s + e.pages, 0)} pages):\n${rdText}\n\nQBANK:\n${qText}\n\nProvide: 📊 Summary, 📖 Reading analysis, ✅ Well done, ❌ Needs improvement, 🎯 Tomorrow's action plan, ⏱️ Study hours estimate. Detailed. Hindi/English mix.`;
+      } else if (reportType === "weekly") {
+        const allDates = Object.keys(logs).sort().slice(-7);
+        const weekLogs = allDates.map(d => `${d}: ${Object.values(logs[d]).filter(Boolean).length} active slots`).join("\n") || "No data";
+        const weekQ = allDates.flatMap(d => qbankData[d] || []);
+        const subStats = {};
+        weekQ.forEach(e => { if (!subStats[e.subject]) subStats[e.subject] = { w: 0, t: 0 }; subStats[e.subject].w += e.wrong; subStats[e.subject].t += e.total; });
+        const qSummary = Object.entries(subStats).map(([s, { w, t }]) => `${s}: ${w}/${t} wrong`).join("\n") || "No QBank data";
+        const weeklyPages = allDates.flatMap(d => readingData[d] || []).reduce((s, e) => s + e.pages, 0);
+        prompt = `WEEKLY REPORT for MBBS student (last 7 days)\n\nACTIVITY:\n${weekLogs}\n\nREADING (Total: ${weeklyPages} pages):\n${getReadingSummaryForReport(7)}\n\nQBANK:\n${qSummary}\n\nProvide: 📈 Score /10, 📖 Reading consistency, 🔴 Top 3 weak topics, 🏆 Strong subjects, 📅 Next week plan, 🎯 MBBS completion estimate. Motivating. Hindi/English mix.`;
+      } else {
+        const allQ = Object.values(qbankData).flat();
+        const subjectMap = {};
+        allQ.forEach(e => { if (!subjectMap[e.subject]) subjectMap[e.subject] = {}; if (!subjectMap[e.subject][e.topic]) subjectMap[e.subject][e.topic] = { w: 0 }; subjectMap[e.subject][e.topic].w += e.wrong; });
+        const qStats = Object.entries(subjectMap).map(([s, topics]) => `${s}:\n` + Object.entries(topics).map(([t, { w }]) => `  • ${t}: ${w} wrong`).join("\n")).join("\n\n") || "No QBank data";
+        const totalPages = Object.values(readingData).flat().reduce((s, e) => s + e.pages, 0);
+        prompt = `MONTHLY MBBS REPORT\n\nTotal days: ${Object.keys(logs).length}\nTotal pages: ${totalPages}\nTotal QBank Qs: ${allQ.reduce((s, e) => s + e.total, 0)}\n\nREADING BY SUBJECT:\n${getReadingSummaryForReport(null)}\n\nQBANK MISTAKES:\n${qStats}\n\nProvide: 📊 Overview, 📖 Reading per subject progress, 🔴 Top 5 weak topics, ✅ Strong areas, 🗺️ Revision roadmap, ⏳ 19-subject completion timeline. Very detailed. Hindi/English mix.`;
+      }
+      setReportOutput(await callAI(prompt));
+    } catch (e) { setReportOutput("❌ Error: " + e.message); }
+    setReportLoading(false);
+  };
+
+  const getMistakeSummary = () => {
+    const map = {};
+    Object.values(qbankData).flat().forEach(e => { const k = `${e.subject}||${e.topic}`; if (!map[k]) map[k] = { subject: e.subject, topic: e.topic, wrong: 0, total: 0 }; map[k].wrong += e.wrong; map[k].total += e.total; });
+    return Object.values(map).sort((a, b) => b.wrong - a.wrong).slice(0, 10);
+  };
+
+  const s = {
+    app: { minHeight: "100vh", background: "#0a0a12", color: "#e8e0f0", fontFamily: "'DM Mono','Courier New',monospace", paddingBottom: "80px" },
+    header: { background: "linear-gradient(135deg,#1a0a2e,#0d1b3e)", padding: "16px 20px 12px", borderBottom: "1px solid #2a1f4e", position: "sticky", top: 0, zIndex: 100 },
+    logo: { fontSize: "20px", fontWeight: 700, background: "linear-gradient(90deg,#a78bfa,#60a5fa,#34d399)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", display: "inline-block" },
+    sub: { fontSize: "11px", color: "#5a6880", marginTop: "2px" },
+    tabs: { display: "flex", background: "#0c0c1a", borderBottom: "1px solid #1e1e35", overflowX: "auto" },
+    tab: (a) => ({ flex: "1", minWidth: "72px", padding: "10px 6px", border: "none", cursor: "pointer", fontSize: "10px", fontFamily: "inherit", background: "transparent", color: a ? "#a78bfa" : "#3a4060", borderBottom: a ? "2px solid #a78bfa" : "2px solid transparent", transition: "all .2s", whiteSpace: "nowrap", textAlign: "center" }),
+    page: { padding: "14px" },
+    card: { background: "#0f0f1e", border: "1px solid #1c1c32", borderRadius: "12px", padding: "14px", marginBottom: "12px" },
+    lbl: { fontSize: "10px", color: "#5a6880", marginBottom: "5px", display: "block", textTransform: "uppercase", letterSpacing: "1.2px", fontWeight: 600 },
+    inp: { width: "100%", background: "#070714", border: "1px solid #252540", color: "#ddd8f0", borderRadius: "8px", padding: "9px 11px", fontSize: "13px", fontFamily: "inherit", outline: "none", boxSizing: "border-box" },
+    ta: { width: "100%", background: "#070714", border: "1px solid #252540", color: "#ddd8f0", borderRadius: "8px", padding: "9px 11px", fontSize: "12px", fontFamily: "inherit", outline: "none", resize: "vertical", boxSizing: "border-box", minHeight: "54px" },
+    sel: { width: "100%", background: "#070714", border: "1px solid #252540", color: "#ddd8f0", borderRadius: "8px", padding: "9px 11px", fontSize: "13px", fontFamily: "inherit", outline: "none" },
+    btn: (c = "purple") => ({ padding: "9px 16px", borderRadius: "8px", border: "none", cursor: "pointer", fontSize: "12px", fontFamily: "inherit", fontWeight: 700, background: c === "purple" ? "linear-gradient(135deg,#7c3aed,#4f46e5)" : c === "blue" ? "linear-gradient(135deg,#2563eb,#0891b2)" : c === "red" ? "linear-gradient(135deg,#dc2626,#9f1239)" : c === "green" ? "linear-gradient(135deg,#059669,#0d9488)" : "linear-gradient(135deg,#d97706,#b45309)", color: "#fff" }),
+    hrRow: { display: "grid", gridTemplateColumns: "58px 1fr", gap: "6px", marginBottom: "5px", alignItems: "center" },
+    hrBadge: (f) => ({ fontSize: "11px", fontWeight: 700, color: f ? "#c4b5fd" : "#2a2a45", background: f ? "#1a0a2e" : "#0a0a16", border: `1px solid ${f ? "#5b21b6" : "#1a1a30"}`, borderRadius: "6px", padding: "5px 4px", textAlign: "center" }),
+    aiBox: { background: "#05050f", border: "1px solid #201545", borderRadius: "10px", padding: "14px", marginTop: "10px", fontSize: "12px", lineHeight: "1.85", color: "#c4b5fd", whiteSpace: "pre-wrap", wordBreak: "break-word" },
+    badge: (c) => ({ display: "inline-block", padding: "2px 7px", borderRadius: "4px", fontSize: "10px", fontWeight: 700, background: c === "red" ? "#3f0a0a" : c === "green" ? "#0a2a1a" : c === "blue" ? "#0a1a3a" : "#1a1a3a", color: c === "red" ? "#f87171" : c === "green" ? "#4ade80" : c === "blue" ? "#60a5fa" : "#818cf8", border: `1px solid ${c === "red" ? "#7f1d1d" : c === "green" ? "#14532d" : c === "blue" ? "#1e3a5f" : "#312e81"}` }),
+    row: { display: "flex", gap: "8px", marginBottom: "8px" },
+    bar: (p, c = "#ef4444") => ({ height: "5px", borderRadius: "3px", background: `linear-gradient(90deg,${c} ${p}%,#1e1e35 0)`, marginTop: "3px" }),
+    grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "12px" },
+  };
+
+  const dayLog = getDayLogs(selectedDate);
+  const todayQBank = qbankData[qbankDate] || [];
+  const todayReading = readingData[rdDate] || [];
+  const todayReadPages = todayReading.reduce((a, e) => a + e.pages, 0);
+  const mistakes = getMistakeSummary();
+  const rdStats = getReadingStats();
+
+  return (
+    <div style={s.app}>
+      <div style={s.header}>
+        <div style={s.logo}>🩺 MedTracker Pro</div>
+        <div style={s.sub}>MBBS 19-Subject System • Daily Log + Reading + QBank + AI Reports</div>
+      </div>
+      <div style={s.tabs}>{TABS.map((t, i) => <button key={i} style={s.tab(tab === i)} onClick={() => setTab(i)}>{t}</button>)}</div>
+
+      {tab === 0 && <div style={s.page}>
+        <div style={s.card}><label style={s.lbl}>📅 Date</label><input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={s.inp} /></div>
+        <div style={s.card}>
+          <label style={s.lbl}>⏰ Hourly Log (00:00 – 23:00)</label>
+          <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
+            {HOURS.map(h => <div key={h} style={s.hrRow}><div style={s.hrBadge(!!dayLog[h]?.trim())}>{h}</div><input style={s.inp} placeholder={`${h} – kya kiya?`} value={dayLog[h] || ""} onChange={e => updateHourLog(h, e.target.value)} /></div>)}
+          </div>
+        </div>
+        <div style={{ textAlign: "center", marginBottom: "10px" }}>
+          <button style={{ ...s.btn("purple"), padding: "12px 28px", fontSize: "13px" }} onClick={analyseDay} disabled={aiLoading}>{aiLoading ? "🔄 Analysing..." : "🤖 AI se Aaj ka Analysis Lo"}</button>
+        </div>
+        {aiAnalysis && <div style={s.aiBox}><div style={{ fontSize: "9px", color: "#5a3f8a", marginBottom: "8px" }}>🤖 AI ANALYSIS • {selectedDate}</div>{aiAnalysis}</div>}
+      </div>}
+
+      {tab === 1 && <div style={s.page}>
+        <div style={{ ...s.card, background: "linear-gradient(135deg,#0d1f0d,#0a1a2e)", border: "1px solid #1a3a1a", textAlign: "center", padding: "18px" }}>
+          <div style={{ fontSize: "11px", color: "#5a8a5a", letterSpacing: "1px", marginBottom: "4px" }}>📖 AAJKE DIN KE PAGES</div>
+          <div style={{ fontSize: "52px", fontWeight: 700, color: "#4ade80", lineHeight: 1 }}>{todayReadPages}</div>
+          <div style={{ fontSize: "11px", color: "#3a6a3a", marginTop: "4px" }}>{todayReading.length} sessions • {rdDate}</div>
+        </div>
+        <div style={s.card}>
+          <label style={s.lbl}>➕ Reading Session Add Karo</label>
+          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Date</label><input type="date" value={rdDate} onChange={e => setRdDate(e.target.value)} style={s.inp} /></div>
+          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Subject</label><select value={rdSubject} onChange={e => setRdSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub => <option key={sub}>{sub}</option>)}</select></div>
+          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Topic / Chapter</label><input placeholder="e.g. Liver Anatomy, Krebs Cycle..." value={rdTopic} onChange={e => setRdTopic(e.target.value)} style={s.inp} /></div>
+          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Source Type</label><select value={rdSource} onChange={e => setRdSource(e.target.value)} style={s.sel}>{SOURCE_TYPES.map(src => <option key={src}>{src}</option>)}</select></div>
+          <div style={s.row}>
+            <div style={{ flex: 1 }}><label style={s.lbl}>Pages Read</label><input type="number" min="1" placeholder="15" value={rdPages} onChange={e => setRdPages(e.target.value)} style={s.inp} /></div>
+            <div style={{ flex: 1 }}><label style={s.lbl}>From Page</label><input type="number" min="1" placeholder="45" value={rdFromPage} onChange={e => setRdFromPage(e.target.value)} style={s.inp} /></div>
+            <div style={{ flex: 1 }}><label style={s.lbl}>To Page</label><input type="number" min="1" placeholder="60" value={rdToPage} onChange={e => setRdToPage(e.target.value)} style={s.inp} /></div>
+          </div>
+          <div style={{ marginBottom: "8px" }}>
+            <label style={s.lbl}>Clarity Rating (1–5)</label>
+            <div style={{ display: "flex", gap: "4px", marginTop: "4px" }}>
+              {[1, 2, 3, 4, 5].map(n => <button key={n} onClick={() => setRdRating(String(n))} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "20px", opacity: n <= +rdRating ? 1 : 0.25 }}>⭐</button>)}
+              <span style={{ fontSize: "11px", color: "#5a6880", alignSelf: "center", marginLeft: "4px" }}>({rdRating}/5)</span>
+            </div>
+          </div>
+          <div style={{ marginBottom: "10px" }}><label style={s.lbl}>Notes</label><textarea placeholder="Important points, doubts..." value={rdNotes} onChange={e => setRdNotes(e.target.value)} style={s.ta} /></div>
+          <button style={s.btn("green")} onClick={addReadingEntry}>📖 Session Save Karo</button>
+        </div>
+        {todayReading.length > 0 && <div style={s.card}>
+          <label style={s.lbl}>📋 {rdDate} ke Sessions</label>
+          {todayReading.map(e => <div key={e.id} style={{ borderBottom: "1px solid #151525", padding: "9px 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ flex: 1 }}><span style={{ fontSize: "13px", fontWeight: 600, color: "#4ade80" }}>{e.subject}</span><span style={{ fontSize: "11px", color: "#3a6a3a", marginLeft: "6px" }}>{e.source}</span></div>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}><span style={s.badge("green")}>{e.pages} pg</span><button onClick={() => deleteReadingEntry(rdDate, e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#5a2a2a", fontSize: "14px" }}>✕</button></div>
+            </div>
+            <div style={{ fontSize: "12px", color: "#7a8aa8", marginTop: "2px" }}>{e.topic}{e.fromPage && e.toPage ? ` (p.${e.fromPage}–${e.toPage})` : ""}</div>
+            <div style={{ fontSize: "11px", color: "#4a5a40", marginTop: "3px" }}>{"⭐".repeat(e.rating)}{"☆".repeat(5 - e.rating)}</div>
+            {e.notes && <div style={{ fontSize: "11px", color: "#4a5a70", marginTop: "4px" }}>{e.notes}</div>}
+          </div>)}
+        </div>}
+        {rdStats.totalPages > 0 && <div style={s.card}>
+          <label style={s.lbl}>📊 Subject-wise Stats (All Time)</label>
+          <div style={{ ...s.card, background: "#070714", border: "1px solid #1a2a1a", marginBottom: "10px", textAlign: "center" }}>
+            <div style={{ fontSize: "32px", fontWeight: 700, color: "#4ade80" }}>{rdStats.totalPages}</div>
+            <div style={{ fontSize: "10px", color: "#3a6a3a" }}>Total Pages Read Ever</div>
+          </div>
+          {Object.entries(rdStats.bySubject).sort((a, b) => b[1].pages - a[1].pages).map(([subj, data]) => {
+            const maxPg = Math.max(...Object.values(rdStats.bySubject).map(d => d.pages));
+            const topSource = Object.entries(data.sources).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+            return <div key={subj} style={{ marginBottom: "10px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "2px" }}>
+                <span style={{ color: "#a0d8a0" }}>{subj}</span>
+                <div style={{ display: "flex", gap: "6px" }}><span style={s.badge("green")}>{data.pages}pg</span><span style={s.badge("blue")}>{data.sessions}x</span></div>
+              </div>
+              <div style={s.bar(Math.round(data.pages / maxPg * 100), "#22c55e")} />
+              <div style={{ fontSize: "10px", color: "#3a5a3a", marginTop: "2px" }}>Mainly: {topSource}</div>
+            </div>;
+          })}
+        </div>}
+      </div>}
+
+      {tab === 2 && <div style={s.page}>
+        <div style={s.card}>
+          <label style={s.lbl}>➕ QBank Entry</label>
+          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Date</label><input type="date" value={qbankDate} onChange={e => setQbankDate(e.target.value)} style={s.inp} /></div>
+          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Subject</label><select value={qbankSubject} onChange={e => setQbankSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub => <option key={sub}>{sub}</option>)}</select></div>
+          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Topic</label><input placeholder="e.g. Brachial Plexus..." value={qbankTopic} onChange={e => setQbankTopic(e.target.value)} style={s.inp} /></div>
+          <div style={s.row}>
+            <div style={{ flex: 1 }}><label style={s.lbl}>Total Qs</label><input type="number" min="0" placeholder="50" value={qTotal} onChange={e => setQTotal(e.target.value)} style={s.inp} /></div>
+            <div style={{ flex: 1 }}><label style={s.lbl}>Wrong</label><input type="number" min="0" placeholder="12" value={qWrong} onChange={e => setQWrong(e.target.value)} style={s.inp} /></div>
+          </div>
+          <div style={{ marginBottom: "10px" }}><label style={s.lbl}>Notes</label><textarea placeholder="Weak concept?" value={qNotes} onChange={e => setQNotes(e.target.value)} style={s.ta} /></div>
+          <button style={s.btn("blue")} onClick={addQBankEntry}>✅ Save Karo</button>
+        </div>
+        <div style={s.card}>
+          <label style={s.lbl}>📸 Wrong Screenshots → AI Analysis</label>
+          <p style={{ fontSize: "11px", color: "#5a6880", marginBottom: "10px", lineHeight: "1.6" }}>Galat answers ke SS upload karo – AI analyse karega</p>
+          <input type="file" ref={fileRef} multiple accept="image/*" style={{ display: "none" }} onChange={e => analyseScreenshots(e.target.files)} />
+          <button style={s.btn("green")} onClick={() => fileRef.current.click()} disabled={ssLoading}>{ssLoading ? "🔄 AI Analyse Kar Raha Hai..." : "📤 Screenshots Upload Karo"}</button>
+          {screenshotAnalysis && <div style={s.aiBox}><div style={{ fontSize: "9px", color: "#3a5a3a", marginBottom: "8px" }}>🔍 SCREENSHOT ANALYSIS</div>{screenshotAnalysis}</div>}
+        </div>
+        {todayQBank.length > 0 && <div style={s.card}>
+          <label style={s.lbl}>📋 {qbankDate} Entries</label>
+          {todayQBank.map(e => <div key={e.id} style={{ borderBottom: "1px solid #151525", padding: "8px 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "13px", fontWeight: 600, color: "#c4b5fd" }}>{e.subject}</span>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}><span style={s.badge(e.total > 0 && e.wrong / e.total > 0.5 ? "red" : "green")}>{e.wrong}/{e.total} wrong</span><button onClick={() => deleteQBankEntry(qbankDate, e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#5a2a2a", fontSize: "14px" }}>✕</button></div>
+            </div>
+            <div style={{ fontSize: "12px", color: "#7a8aa8", marginTop: "2px" }}>{e.topic}</div>
+            {e.total > 0 && <div style={s.bar(Math.min(100, e.wrong / e.total * 100))} />}
+          </div>)}
+        </div>}
+        {mistakes.length > 0 && <div style={s.card}>
+          <label style={s.lbl}>🔴 Top Weak Topics – All Time</label>
+          {mistakes.map((m, i) => <div key={i} style={{ marginBottom: "10px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}><span style={{ color: "#c4b5fd", flex: 1 }}>{m.subject} <span style={{ color: "#6a7a98" }}>→ {m.topic}</span></span><span style={s.badge("red")}>{m.wrong}W</span></div>
+            <div style={s.bar(Math.min(100, m.total > 0 ? m.wrong / m.total * 100 : 100))} />
+          </div>)}
+        </div>}
+      </div>}
+
+      {tab === 3 && <div style={s.page}>
+        <div style={s.grid2}>
+          {[{ l: "Study Days", v: Object.keys(logs).length, i: "📅" }, { l: "Total Pages", v: rdStats.totalPages, i: "📖" }, { l: "QBank Sessions", v: Object.values(qbankData).flat().length, i: "🧪" }, { l: "Total Wrong", v: Object.values(qbankData).flat().reduce((a, e) => a + e.wrong, 0), i: "❌" }].map((x, i) => (
+            <div key={i} style={{ ...s.card, textAlign: "center", padding: "12px", marginBottom: 0 }}>
+              <div style={{ fontSize: "22px" }}>{x.i}</div>
+              <div style={{ fontSize: "24px", fontWeight: 700, color: x.i === "📖" ? "#4ade80" : "#a78bfa", margin: "4px 0" }}>{x.v}</div>
+              <div style={{ fontSize: "10px", color: "#3a4a60" }}>{x.l}</div>
+            </div>
+          ))}
+        </div>
+        <div style={s.card}>
+          <label style={s.lbl}>📊 Report Type</label>
+          <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap" }}>
+            {[["daily", "📅 Daily"], ["weekly", "📆 Weekly"], ["monthly", "🗓️ Monthly"]].map(([t, l]) => (
+              <button key={t} onClick={() => setReportType(t)} style={{ ...s.btn(reportType === t ? "purple" : "blue"), opacity: reportType === t ? 1 : 0.55 }}>{l}</button>
+            ))}
+          </div>
+          <button style={{ ...s.btn("purple"), width: "100%", padding: "13px", fontSize: "13px" }} onClick={generateReport} disabled={reportLoading}>{reportLoading ? "🔄 Generate Ho Rahi Hai..." : "⚡ Report Generate Karo (1 Click)"}</button>
+        </div>
+        {reportOutput && <div style={s.card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
+            <label style={s.lbl}>📋 {reportType.toUpperCase()} REPORT</label>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button style={s.btn("blue")} onClick={() => { const el = document.createElement("a"); el.href = "data:text/plain;charset=utf-8," + encodeURIComponent(reportOutput); el.download = `MBBS_${reportType}_${getToday()}.txt`; el.click(); }}>💾 .txt</button>
+              <button style={s.btn("green")} onClick={() => { const el = document.createElement("a"); const html = `<html><head><title>MBBS Report</title><style>body{font-family:monospace;background:#0a0a12;color:#c4b5fd;padding:24px;white-space:pre-wrap;line-height:1.8;}</style></head><body>${reportOutput}</body></html>`; el.href = "data:text/html;charset=utf-8," + encodeURIComponent(html); el.download = `MBBS_${reportType}_${getToday()}.html`; el.click(); }}>💾 .html</button>
+            </div>
+          </div>
+          <div style={s.aiBox}>{reportOutput}</div>
+        </div>}
+      </div>}
+
+      {tab === 4 && <div style={s.page}>
+        <div style={s.card}>
+          <label style={s.lbl}>🔑 Gemini API Key (Required for AI)</label>
+          <p style={{fontSize:"11px", color:"#e87070", marginBottom:"8px", lineHeight:"1.6", background:"#2a0a0a", padding:"8px", borderRadius:"6px", border:"1px solid #5a1a1a"}}>
+            ⚠️ AI features ke liye Gemini key zaroori hai.<br/>
+            Free key lo: <b style={{color:"#60a5fa"}}>aistudio.google.com/apikey</b>
+          </p>
+          <input type="password" placeholder="AIzaSy..." value={apiKeyInput} onChange={e => setApiKeyInput(e.target.value)} style={{ ...s.inp, marginBottom: "10px" }} />
+          <button style={s.btn("green")} onClick={saveApiKey}>💾 Key Save Karo</button>
+          {apiKey
+            ? <div style={{ marginTop: "8px", fontSize: "11px", color: "#34d399" }}>✅ Key saved! AI features ready.</div>
+            : <div style={{ marginTop: "8px", fontSize: "11px", color: "#f87171" }}>❌ Key nahi hai – AI kaam nahi karega</div>
+          }
+        </div>
+        <div style={s.card}>
+          <label style={s.lbl}>📚 19 Subjects – Progress</label>
+          {SUBJECTS.map((subj, i) => {
+            const qd = Object.values(qbankData).flat().filter(e => e.subject === subj);
+            const qt = qd.reduce((a, e) => a + e.total, 0), qw = qd.reduce((a, e) => a + e.wrong, 0);
+            const acc = qt ? Math.round((1 - qw / qt) * 100) : null;
+            const rp = Object.values(readingData).flat().filter(e => e.subject === subj).reduce((a, e) => a + e.pages, 0);
+            return <div key={subj} style={{ borderBottom: "1px solid #111124", padding: "7px 0", fontSize: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: "#b0a0d8" }}>{i + 1}. {subj}</span>
+                <div style={{ display: "flex", gap: "5px" }}>
+                  {rp > 0 && <span style={s.badge("green")}>{rp}pg</span>}
+                  {acc !== null ? <span style={s.badge(acc >= 70 ? "green" : "red")}>{acc}%</span> : <span style={{ color: "#252535", fontSize: "10px" }}>–</span>}
+                </div>
+              </div>
+            </div>;
+          })}
+        </div>
+        <div style={s.card}>
+          <label style={s.lbl}>🗑️ Data Management</label>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <button style={s.btn("red")} onClick={() => { if (window.confirm("Daily logs delete?")) { setLogs({}); localStorage.removeItem("daily_logs"); } }}>🗑️ Daily</button>
+            <button style={s.btn("red")} onClick={() => { if (window.confirm("Reading data delete?")) { setReadingData({}); localStorage.removeItem("reading_data"); } }}>🗑️ Reading</button>
+            <button style={s.btn("red")} onClick={() => { if (window.confirm("QBank data delete?")) { setQbankData({}); localStorage.removeItem("qbank_data"); } }}>🗑️ QBank</button>
+          </div>
+        </div>
+        <div style={{ ...s.card, textAlign: "center" }}>
+          <div style={{ fontSize: "28px", marginBottom: "6px" }}>🩺</div>
+          <div style={{ fontSize: "13px", color: "#6a7a98" }}>MedTracker Pro v2.0</div>
+          <div style={{ fontSize: "10px", color: "#353545", marginTop: "4px" }}>GitHub Pages Edition • No npm needed</div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
