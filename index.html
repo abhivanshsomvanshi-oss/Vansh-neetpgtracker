@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<base href="/Vansh-neetpgtracker/"/>
 <title>MedTracker Pro – MBBS Study System</title>
+<link rel="manifest" href="manifest.json"/>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -17,48 +17,10 @@
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 const SUBJECTS = ["Anatomy","Physiology","Biochemistry","Pathology","Pharmacology","Microbiology","Forensic Medicine","Community Medicine","ENT","Ophthalmology","Medicine","Surgery","Obstetrics","Gynaecology","Pediatrics","Orthopedics","Radiology","Anesthesia","Psychiatry"];
-const HOURS = Array.from({length:24},(_,i)=>`${String(i).padStart(2,"0")}:00 to ${String((i+1)%24).padStart(2,"0")}:00`);
+const HOURS = Array.from({length:24},(_,i)=>`${String(i).padStart(2,"0")}:00`);
 const SOURCE_TYPES = ["Textbook","BTR Notes","Handwritten Notes","Slides/PDF","Video Notes","Revision Notes"];
 const getToday = () => new Date().toISOString().split("T")[0];
 const TABS = ["📅 Daily Log","📖 Reading","🧪 QBank","📊 Reports","⚙️ Settings"];
-
-// Mini bar chart component
-function MiniBarChart({ data, color = "#a78bfa", label }) {
-  if (!data || data.length === 0) return null;
-  const max = Math.max(...data.map(d => d.value), 1);
-  return (
-    <div style={{ marginTop: "10px" }}>
-      {label && <div style={{ fontSize: "10px", color: "#5a6880", marginBottom: "6px", letterSpacing: "1px", textTransform: "uppercase" }}>{label}</div>}
-      <div style={{ display: "flex", alignItems: "flex-end", gap: "4px", height: "60px" }}>
-        {data.map((d, i) => (
-          <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
-            <div style={{ width: "100%", background: color, borderRadius: "3px 3px 0 0", height: `${Math.max(4, (d.value / max) * 54)}px`, opacity: 0.85, transition: "height 0.3s" }} />
-            <div style={{ fontSize: "8px", color: "#3a4060", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{d.label}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Donut / ring progress
-function RingProgress({ pct, color = "#a78bfa", size = 56, label }) {
-  const r = (size / 2) - 6;
-  const circ = 2 * Math.PI * r;
-  const dash = (pct / 100) * circ;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
-      <svg width={size} height={size}>
-        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#1e1e35" strokeWidth="5" />
-        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth="5"
-          strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
-          transform={`rotate(-90 ${size/2} ${size/2})`} />
-        <text x={size/2} y={size/2+4} textAnchor="middle" fill={color} fontSize="11" fontWeight="700" fontFamily="DM Mono,monospace">{pct}%</text>
-      </svg>
-      {label && <div style={{ fontSize: "9px", color: "#5a6880", textAlign: "center", maxWidth: "60px", lineHeight: 1.3 }}>{label}</div>}
-    </div>
-  );
-}
 
 function App() {
   const [tab, setTab] = useState(0);
@@ -68,21 +30,18 @@ function App() {
   const [selectedDate, setSelectedDate] = useState(getToday());
   const [aiAnalysis, setAiAnalysis] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
-  // NEW: Tomorrow's subject target state
-  const [tomorrowTarget, setTomorrowTarget] = useState(() => { try { return JSON.parse(localStorage.getItem("tomorrow_target") || "null"); } catch { return null; } });
-  const [targetLoading, setTargetLoading] = useState(false);
-
   const [readingData, setReadingData] = useState(() => { try { return JSON.parse(localStorage.getItem("reading_data") || "{}"); } catch { return {}; } });
   const [rdDate, setRdDate] = useState(getToday());
   const [rdSubject, setRdSubject] = useState(SUBJECTS[0]);
+  const [rdTopic, setRdTopic] = useState("");
   const [rdSource, setRdSource] = useState(SOURCE_TYPES[1]);
   const [rdPages, setRdPages] = useState("");
   const [rdFromPage, setRdFromPage] = useState("");
   const [rdToPage, setRdToPage] = useState("");
-  const [rdVideoHours, setRdVideoHours] = useState(""); // NEW: video hours instead of topic
-  const [rdFlashcards, setRdFlashcards] = useState("");
+  const [rdNotes, setRdNotes] = useState("");
   const [rdRating, setRdRating] = useState("3");
-
+  // Reading count — kitni baar subject padha (1st reading, 2nd reading, etc)
+  const [readCounts, setReadCounts] = useState(() => { try { return JSON.parse(localStorage.getItem("read_counts") || "{}"); } catch { return {}; } });
   const [qbankData, setQbankData] = useState(() => { try { return JSON.parse(localStorage.getItem("qbank_data") || "{}"); } catch { return {}; } });
   const [qbankDate, setQbankDate] = useState(getToday());
   const [qbankSubject, setQbankSubject] = useState(SUBJECTS[0]);
@@ -93,17 +52,142 @@ function App() {
   const [screenshotAnalysis, setScreenshotAnalysis] = useState("");
   const [ssLoading, setSsLoading] = useState(false);
   const fileRef = useRef();
+  const importRef = useRef();
   const [reportType, setReportType] = useState("daily");
   const [reportOutput, setReportOutput] = useState("");
   const [reportLoading, setReportLoading] = useState(false);
-  const [reportCharts, setReportCharts] = useState(null); // NEW: parsed chart data
+
+  // Goals system
+  const [goals, setGoals] = useState(() => { try { return JSON.parse(localStorage.getItem("daily_goals") || "{}"); } catch { return {}; } });
+  const [goalSubject, setGoalSubject] = useState(SUBJECTS[0]);
+  const [goalPages, setGoalPages] = useState("");
+  const [goalDate, setGoalDate] = useState(getToday());
+  const [aiGoalSuggestion, setAiGoalSuggestion] = useState("");
+  const [goalLoading, setGoalLoading] = useState(false);
 
   useEffect(() => localStorage.setItem("daily_logs", JSON.stringify(logs)), [logs]);
   useEffect(() => localStorage.setItem("qbank_data", JSON.stringify(qbankData)), [qbankData]);
   useEffect(() => localStorage.setItem("reading_data", JSON.stringify(readingData)), [readingData]);
-  useEffect(() => { if (tomorrowTarget) localStorage.setItem("tomorrow_target", JSON.stringify(tomorrowTarget)); }, [tomorrowTarget]);
+  useEffect(() => localStorage.setItem("read_counts", JSON.stringify(readCounts)), [readCounts]);
+  useEffect(() => localStorage.setItem("daily_goals", JSON.stringify(goals)), [goals]);
 
   const saveApiKey = () => { localStorage.setItem("gemini_key", apiKeyInput); setApiKey(apiKeyInput); alert("✅ API Key saved!"); };
+
+  const exportData = () => {
+    const data = {
+      version: "2.0",
+      exportDate: new Date().toISOString(),
+      daily_logs: logs,
+      reading_data: readingData,
+      read_counts: readCounts,
+      qbank_data: qbankData,
+      daily_goals: goals,
+    };
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `MedTracker_Backup_${getToday()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importData = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data.daily_logs && !data.reading_data && !data.qbank_data) {
+          alert("❌ Invalid backup file!"); return;
+        }
+        if (!window.confirm("Purana data replace ho jaayega. Confirm?")) return;
+        if (data.daily_logs) { setLogs(data.daily_logs); localStorage.setItem("daily_logs", JSON.stringify(data.daily_logs)); }
+        if (data.reading_data) { setReadingData(data.reading_data); localStorage.setItem("reading_data", JSON.stringify(data.reading_data)); }
+        if (data.read_counts) { setReadCounts(data.read_counts); localStorage.setItem("read_counts", JSON.stringify(data.read_counts)); }
+        if (data.qbank_data) { setQbankData(data.qbank_data); localStorage.setItem("qbank_data", JSON.stringify(data.qbank_data)); }
+        if (data.daily_goals) { setGoals(data.daily_goals); localStorage.setItem("daily_goals", JSON.stringify(data.daily_goals)); }
+        alert("✅ Data successfully import ho gaya!");
+      } catch(err) { alert("❌ File read error: " + err.message); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const saveGoal = () => {
+    if (!goalPages || +goalPages < 1) { alert("Pages target bharo!"); return; }
+    const key = goalDate;
+    const existing = goals[key] || [];
+    const updated = existing.filter(g => g.subject !== goalSubject);
+    updated.push({ subject: goalSubject, targetPages: +goalPages, date: goalDate, id: Date.now() });
+    setGoals(prev => ({ ...prev, [key]: updated }));
+    setGoalPages("");
+    alert(`✅ Target set: ${goalSubject} – ${goalPages} pages on ${goalDate}`);
+  };
+
+  const deleteGoal = (date, id) => setGoals(prev => ({ ...prev, [date]: (prev[date]||[]).filter(g => g.id !== id) }));
+
+  const getTodayGoals = () => goals[getToday()] || [];
+
+  const getGoalProgress = (subject, date) => {
+    const target = (goals[date]||[]).find(g => g.subject === subject);
+    const actual = (readingData[date]||[]).filter(e => e.subject === subject).reduce((s,e) => s+e.pages, 0);
+    return target ? { target: target.targetPages, actual, pct: Math.min(100, Math.round(actual/target.targetPages*100)) } : null;
+  };
+
+  const getAiGoalSuggestion = async () => {
+    setGoalLoading(true); setAiGoalSuggestion("");
+    try {
+      // Build history: last 7 days reading per subject
+      const last7 = Object.entries(readingData).sort().slice(-7);
+      const history = {};
+      last7.forEach(([date, entries]) => {
+        entries.forEach(e => {
+          if (!history[e.subject]) history[e.subject] = [];
+          history[e.subject].push({ date, pages: e.pages });
+        });
+      });
+      const histText = Object.entries(history).map(([s,arr]) => {
+        const avg = Math.round(arr.reduce((a,e)=>a+e.pages,0)/arr.length);
+        return \`\${s}: avg \${avg}pg/day (last \${arr.length} sessions)\`;
+      }).join("\n") || "No reading history yet";
+
+      const todayGoalsList = getTodayGoals().map(g=>\`\${g.subject}: \${g.targetPages}pg\`).join(", ") || "None set";
+      const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
+      const tomorrowStr = tomorrow.toISOString().split("T")[0];
+
+      const prompt = \`You are a NEET PG study coach. Suggest tomorrow's reading targets.
+
+STUDENT'S READING HISTORY (last 7 days):
+\${histText}
+
+TODAY'S TARGETS: \${todayGoalsList}
+
+Rules for suggestions:
+- Start SMALL if new subject (10-15 pages)
+- Increase by 5-10% each day if target was met
+- Decrease by 10% if target was missed 2 days in a row
+- Max 30 pages per subject per day
+- Suggest max 2-3 subjects per day
+- Focus on NEET PG high-yield subjects
+
+Reply in EXACT format:
+📅 TARGETS FOR TOMORROW (\${tomorrowStr})
+
+Subject | Target | Reason
+--------|--------|-------
+[Subject] | [X] pages | [why, 5 words]
+[Subject] | [X] pages | [why, 5 words]
+
+💡 STRATEGY: [1 line tip for tomorrow]
+⚡ PRIORITY ORDER: [Subject1] → [Subject2] → [Subject3]\`;
+
+      setAiGoalSuggestion(await callAI(prompt));
+    } catch(e) { setAiGoalSuggestion("❌ Error: " + e.message); }
+    setGoalLoading(false);
+  };
   const updateHourLog = (hour, val) => setLogs(prev => ({ ...prev, [selectedDate]: { ...(prev[selectedDate] || {}), [hour]: val } }));
   const getDayLogs = (date) => logs[date] || {};
 
@@ -127,114 +211,34 @@ function App() {
     return data.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "No response";
   };
 
-  // Compute avg speed over last N days
-  const getAvgSpeed = () => {
-    const last7 = Object.entries(readingData).sort((a,b)=>a[0]>b[0]?-1:1).slice(0,7);
-    const totalPages = last7.flatMap(([,arr])=>arr).reduce((s,e)=>s+e.pages,0);
-    const totalVids = last7.flatMap(([,arr])=>arr).reduce((s,e)=>s+(e.videoHours||0),0);
-    const days = last7.length || 1;
-    return { avgPages: Math.round(totalPages/days), avgVids: +(totalVids/days).toFixed(1) };
+  const incrementReadCount = (subject) => {
+    setReadCounts(prev => ({ ...prev, [subject]: (prev[subject] || 0) + 1 }));
   };
-
-  // Progressive target: base on avg + 10% increment each day tracked
-  const computeTarget = (avgPages, avgVids, daysTracked) => {
-    const inc = Math.min(daysTracked, 14); // cap at 14 increments
-    const targetPages = Math.max(10, Math.round(avgPages * (1 + inc * 0.07)));
-    const targetVids = Math.max(0.5, +(avgVids * (1 + inc * 0.05)).toFixed(1));
-    return { targetPages, targetVids };
-  };
-
-  const askTomorrowTarget = async () => {
-    setTargetLoading(true);
-    try {
-      const { avgPages, avgVids } = getAvgSpeed();
-      const daysTracked = Object.keys(readingData).length;
-      const { targetPages, targetVids } = computeTarget(avgPages, avgVids, daysTracked);
-      const readSummary = Object.entries(readingData).sort((a,b)=>a[0]>b[0]?-1:1).slice(0,7)
-        .map(([d,arr])=>`${d}: ${arr.map(e=>`${e.subject}(${e.pages}pg,${e.videoHours||0}hr)`).join(",")}`)
-        .join("\n") || "No data yet";
-      const prompt = `You are a NEET PG study coach. Based on this student's reading history:
-${readSummary}
-
-Student's current avg: ${avgPages} pages/day, ${avgVids} video hrs/day
-Days tracked: ${daysTracked}
-
-Give ONLY numeric targets for tomorrow. Do NOT suggest any subject.
-
-Reply in STRICT format (nothing else, no extra text):
-TARGET_PAGES: ${targetPages}
-TARGET_VIDEO_HRS: ${targetVids}
-TIP: [1 motivational line in Hindi]`;
-      const raw = await callAI(prompt);
-      const parse = (key) => { const m = raw.match(new RegExp(key + ":\\s*(.+)")); return m ? m[1].trim() : ""; };
-      setTomorrowTarget({
-        pages: parse("TARGET_PAGES") || String(targetPages),
-        videoHrs: parse("TARGET_VIDEO_HRS") || String(targetVids),
-        tip: parse("TIP"),
-        date: new Date(Date.now() + 86400000).toISOString().split("T")[0]
-      });
-    } catch(e) { alert("Error: " + e.message); }
-    setTargetLoading(false);
+  const decrementReadCount = (subject) => {
+    setReadCounts(prev => ({ ...prev, [subject]: Math.max(0, (prev[subject] || 0) - 1) }));
   };
 
   const addReadingEntry = () => {
-    if (!rdPages) { alert("Pages field bharo!"); return; }
-    const entry = {
-      id: Date.now(), date: rdDate, subject: rdSubject,
-      source: rdSource, pages: +rdPages,
-      fromPage: rdFromPage ? +rdFromPage : null,
-      toPage: rdToPage ? +rdToPage : null,
-      videoHours: rdVideoHours ? +rdVideoHours : 0, // NEW
-      flashcards: rdFlashcards ? +rdFlashcards : 0,
-      rating: +rdRating
-    };
+    if (!rdTopic.trim() || !rdPages) { alert("Topic aur Pages fields bharo!"); return; }
+    const entry = { id: Date.now(), date: rdDate, subject: rdSubject, topic: rdTopic.trim(), source: rdSource, pages: +rdPages, fromPage: rdFromPage ? +rdFromPage : null, toPage: rdToPage ? +rdToPage : null, notes: rdNotes.trim(), rating: +rdRating };
     setReadingData(prev => ({ ...prev, [rdDate]: [...(prev[rdDate] || []), entry] }));
-    setRdPages(""); setRdFromPage(""); setRdToPage(""); setRdVideoHours(""); setRdFlashcards(""); setRdRating("3");
+    setRdTopic(""); setRdPages(""); setRdFromPage(""); setRdToPage(""); setRdNotes(""); setRdRating("3");
   };
   const deleteReadingEntry = (date, id) => setReadingData(prev => ({ ...prev, [date]: (prev[date] || []).filter(e => e.id !== id) }));
 
   const getReadingStats = () => {
     const all = Object.values(readingData).flat();
     const bySubject = {};
-    all.forEach(e => {
-      if (!bySubject[e.subject]) bySubject[e.subject] = { pages: 0, sessions: 0, videoHours: 0, sources: {} };
-      bySubject[e.subject].pages += e.pages;
-      bySubject[e.subject].sessions += 1;
-      bySubject[e.subject].videoHours += (e.videoHours || 0);
-      bySubject[e.subject].sources[e.source] = (bySubject[e.subject].sources[e.source] || 0) + 1;
-    });
-    return {
-      bySubject,
-      totalPages: all.reduce((s, e) => s + e.pages, 0),
-      totalVideoHours: all.reduce((s, e) => s + (e.videoHours || 0), 0),
-      totalSessions: all.length
-    };
+    all.forEach(e => { if (!bySubject[e.subject]) bySubject[e.subject] = { pages: 0, sessions: 0, sources: {} }; bySubject[e.subject].pages += e.pages; bySubject[e.subject].sessions += 1; bySubject[e.subject].sources[e.source] = (bySubject[e.subject].sources[e.source] || 0) + 1; });
+    return { bySubject, totalPages: all.reduce((s, e) => s + e.pages, 0), totalSessions: all.length };
   };
 
   const getReadingSummaryForReport = (days = null) => {
     let entries = Object.values(readingData).flat();
     if (days) { const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days); entries = entries.filter(e => new Date(e.date) >= cutoff); }
     const bySubject = {};
-    entries.forEach(e => {
-      if (!bySubject[e.subject]) bySubject[e.subject] = { pages: 0, sessions: 0, videoHours: 0 };
-      bySubject[e.subject].pages += e.pages;
-      bySubject[e.subject].sessions += 1;
-      bySubject[e.subject].videoHours += (e.videoHours || 0);
-    });
-    return Object.entries(bySubject).map(([s, d]) => `${s}: ${d.pages} pages, ${d.videoHours.toFixed(1)} video hrs, ${d.sessions} sessions`).join("\n") || "No reading data";
-  };
-
-  // Get last 7 days pages per day for chart
-  const getLast7DaysData = () => {
-    const days = Array.from({length:7}, (_,i) => {
-      const d = new Date(); d.setDate(d.getDate() - (6-i));
-      return d.toISOString().split("T")[0];
-    });
-    return days.map(d => ({
-      label: d.slice(5),
-      pages: (readingData[d]||[]).reduce((s,e)=>s+e.pages,0),
-      vids: (readingData[d]||[]).reduce((s,e)=>s+(e.videoHours||0),0)
-    }));
+    entries.forEach(e => { if (!bySubject[e.subject]) bySubject[e.subject] = { pages: 0, sessions: 0, topics: [] }; bySubject[e.subject].pages += e.pages; bySubject[e.subject].sessions += 1; bySubject[e.subject].topics.push(e.topic); });
+    return Object.entries(bySubject).map(([s, d]) => `${s}: ${d.pages} pages, ${d.sessions} sessions, Topics: ${[...new Set(d.topics)].join(", ")}`).join("\n") || "No reading data";
   };
 
   const analyseDay = async () => {
@@ -244,29 +248,40 @@ TIP: [1 motivational line in Hindi]`;
     setAiLoading(true); setAiAnalysis("");
     try {
       const logText = filled.map(([h, v]) => `${h} – ${v}`).join("\n");
-      const readToday = (readingData[selectedDate] || []).map(e => `${e.subject}: ${e.pages}pg, ${e.videoHours||0}hr video (${e.source})`).join("\n") || "No reading logged";
-      const prompt = `You are a NEET PG preparation coach. Student's day: ${selectedDate}
+      const readToday = (readingData[selectedDate] || []).map(e => `${e.subject}/${e.topic}: ${e.pages}pg (${e.source})`).join("\n") || "No reading logged";
+      const todayGoals = (goals[selectedDate]||[]).map(g=>{
+        const prog = getGoalProgress(g.subject, selectedDate);
+        return `${g.subject}: target ${g.targetPages}pg → actual ${prog?prog.actual:0}pg (${prog?prog.pct:0}%)`;
+      }).join("\n") || "No targets set";
+      const prompt = `NEET PG Daily Coach – ${selectedDate}
 
 HOURLY LOG: ${logText}
 READING: ${readToday}
+TODAY'S TARGETS vs ACTUAL:
+${todayGoals}
 
-Reply in STRICT point format — NO paragraphs, NO essays:
+Reply in STRICT point format — NO paragraphs:
 
 ⏰ TIME AUDIT
-→ Productive: [X hrs] | Wasted: [X hrs]
-[each wasted slot]: HH:00 → [reason, 4 words max]
+→ Productive: [X]hrs | Wasted: [X]hrs
+[each wasted slot as]: HH:00 → [reason, 4 words]
 
 📊 NEET PG EFFICIENCY: [X]/10
 
-⚡ BIGGEST MISTAKE TODAY
-→ [1 line only]
+🎯 TARGET REPORT
+[for each subject with target]:
+[Subject]: [X/Y pages] → [✅ Met / ⚠️ Partial / ❌ Missed]
 
-✅ KAL KA PLAN (3 points)
-1. [time] → [subject/topic]
-2. [time] → [subject/topic]  
-3. [time] → [subject/topic]
+⚡ IMPROVEMENT (1 line only)
+→ [most important change needed]
 
-STRICT: Max 15 lines. Hindi/English mix.`;
+📅 KAL KA SUGGESTED TARGET
+[Subject] → [X] pages ([increase/same/decrease from today])
+[Subject] → [X] pages ([increase/same/decrease from today])
+
+💡 TIP: [1 line NEET PG specific advice]
+
+STRICT: Max 20 lines. Hindi/English mix.`;
       setAiAnalysis(await callAI(prompt));
     } catch (e) { setAiAnalysis("❌ Error: " + e.message); }
     setAiLoading(false);
@@ -295,32 +310,23 @@ STRICT: Max 15 lines. Hindi/English mix.`;
   };
 
   const generateReport = async () => {
-    setReportLoading(true); setReportOutput(""); setReportCharts(null);
+    setReportLoading(true); setReportOutput("");
     try {
-      const today = getToday();
-      const { avgPages, avgVids } = getAvgSpeed();
-      const daysTracked = Object.keys(readingData).length;
-      const { targetPages, targetVids } = computeTarget(avgPages, avgVids, daysTracked);
-      const last7 = getLast7DaysData();
-      let prompt = "";
-
+      const today = getToday(); let prompt = "";
       if (reportType === "daily") {
         const dayLog = getDayLogs(today), qToday = qbankData[today] || [], rdToday = readingData[today] || [];
         const logText = Object.entries(dayLog).filter(([, v]) => v?.trim()).map(([h, v]) => `${h}: ${v}`).join("\n") || "No hourly logs";
         const qText = qToday.map(e => `${e.subject}/${e.topic}: ${e.wrong}/${e.total} wrong`).join("\n") || "No QBank today";
-        const rdText = rdToday.map(e => `${e.subject}: ${e.pages}pg, ${e.videoHours||0}hr video from ${e.source} [rating:${e.rating}/5]`).join("\n") || "No reading today";
+        const rdText = rdToday.map(e => `${e.subject}/${e.topic}: ${e.pages}pg from ${e.source} [rating:${e.rating}/5]`).join("\n") || "No reading today";
         prompt = `NEET PG Daily Report – ${today}
-HOURLY SCHEDULE: ${logText}
+LOG: ${logText}
 READING: ${rdText}
 QBANK: ${qText}
-STUDENT AVG SPEED: ${avgPages} pages/day, ${avgVids} video hrs/day
-DAYS TRACKED: ${daysTracked}
-TOMORROW TARGET: ${targetPages} pages, ${targetVids} video hrs
 
 STRICT FORMAT — bullets/points only, no paragraphs:
 
 📅 SNAPSHOT
-→ Study: [X]hrs | Pages: [X] | Video: [X]hrs | QBank: [X]Qs | Accuracy: [X]%
+→ Study: [X]hrs | Pages: [X] | QBank: [X]Qs | Accuracy: [X]%
 
 ✅ WINS (max 2)
 • [point]
@@ -330,22 +336,17 @@ STRICT FORMAT — bullets/points only, no paragraphs:
 • [point]
 • [point]
 
-📖 READING ANALYSIS
-→ Pages: [actual vs target ${avgPages}] | [pace: fast/ok/slow]
-→ Video Hours: [actual vs target ${avgVids}] | [coverage: good/ok/lacking]
-→ Schedule se match: [kitna % time padhai pe gaya]
+📖 READING → [pace: fast/ok/slow] | [source used]
+🧪 QBANK → [strong/weak] | [subject]
 
-🎯 KAL KA TARGET (Progressive)
-→ Subject: [suggest based on gaps]
-→ Pages Target: ${targetPages} (current avg ${avgPages} se ${Math.round((targetPages-avgPages)/avgPages*100)}% zyada)
-→ Video Target: ${targetVids} hrs (current avg ${avgVids} se thoda zyada)
-→ QBank: [X] questions
-
-📈 IMPROVEMENT TIP
-→ [1 specific actionable suggestion]
+🎯 TOMORROW TIMETABLE
+06:00–08:00 → [subject/topic]
+08:00–10:00 → [subject/topic]
+14:00–16:00 → [subject/topic]
+18:00–20:00 → [subject/topic]
+20:00–22:00 → QBank ([X] questions)
 
 Max 25 lines. Hindi/English mix.`;
-
       } else if (reportType === "weekly") {
         const allDates = Object.keys(logs).sort().slice(-7);
         const weekLogs = allDates.map(d => `${d}: ${Object.values(logs[d]).filter(Boolean).length} active slots`).join("\n") || "No data";
@@ -354,68 +355,58 @@ Max 25 lines. Hindi/English mix.`;
         weekQ.forEach(e => { if (!subStats[e.subject]) subStats[e.subject] = { w: 0, t: 0 }; subStats[e.subject].w += e.wrong; subStats[e.subject].t += e.total; });
         const qSummary = Object.entries(subStats).map(([s, { w, t }]) => `${s}: ${w}/${t} wrong`).join("\n") || "No QBank data";
         const weeklyPages = allDates.flatMap(d => readingData[d] || []).reduce((s, e) => s + e.pages, 0);
-        const weeklyVids = allDates.flatMap(d => readingData[d] || []).reduce((s, e) => s + (e.videoHours||0), 0);
         prompt = `NEET PG Weekly Report (last 7 days)
-SCHEDULE: ${weekLogs}
-READING (${weeklyPages}pg, ${weeklyVids.toFixed(1)} video hrs): ${getReadingSummaryForReport(7)}
+ACTIVITY: ${weekLogs}
+READING (${weeklyPages}pg): ${getReadingSummaryForReport(7)}
 QBANK: ${qSummary}
-DAILY BREAKDOWN: ${last7.map(d=>`${d.label}:${d.pages}pg,${d.vids}hr`).join(" | ")}
-CURRENT AVG: ${avgPages} pg/day, ${avgVids} hr/day
-NEXT WEEK TARGET: ${targetPages} pg/day, ${targetVids} hr/day
 
 STRICT FORMAT — no paragraphs:
 
 📊 WEEK SCORECARD
-→ Score: [X]/10 | Avg hrs/day: [X] | Pages: ${weeklyPages} | Video: ${weeklyVids.toFixed(1)}hrs | Accuracy: [X]%
+→ Score: [X]/10 | Avg hrs/day: [X] | Pages: ${weeklyPages} | Accuracy: [X]%
 
 📚 SUBJECT TABLE (tracked subjects only)
-Subject → Pages | Video Hrs | QBank% | Status(✅/⚠️/🔴)
+Subject → Pages | QBank% | Status(✅/⚠️/🔴)
 
 🔴 FIX NEXT WEEK (top 3)
-1. [Subject→reason] – [why, 5 words]
-2. [Subject→reason] – [why, 5 words]
-3. [Subject→reason] – [why, 5 words]
+1. [Subject→Topic] – [why, 5 words]
+2. [Subject→Topic] – [why, 5 words]
+3. [Subject→Topic] – [why, 5 words]
 
 🏆 STRONGEST THIS WEEK
 → [Subject] – [reason]
 
-📅 NEXT WEEK TARGETS (Progressive)
-Mon–Tue → [Subject] | ${targetPages}pg/day | ${targetVids}hr video
-Wed–Thu → [Subject] | ${targetPages}pg/day | ${targetVids}hr video
-Fri–Sat → [Subject] | ${targetPages}pg/day | ${targetVids}hr video
+📅 NEXT WEEK FLOW
+Mon–Tue → [Subject] + [QBank target]
+Wed–Thu → [Subject] + [QBank target]
+Fri–Sat → [Subject] + [QBank target]
 Sun     → Revision + Mock
-
-📈 SCHEDULE vs READING MATCH
-→ [Kitne % time schedule mein tha aur actual mein padha — honest assessment]
 
 ⏳ NEET PG PACE
 → Current pace se syllabus: [X months]
-→ Target adjustment: [specific suggestion]
+→ Target: [adjustment needed?]
 
-Max 35 lines. Hindi/English mix.`;
-
+Max 30 lines. Hindi/English mix.`;
       } else {
         const allQ = Object.values(qbankData).flat();
         const subjectMap = {};
         allQ.forEach(e => { if (!subjectMap[e.subject]) subjectMap[e.subject] = {}; if (!subjectMap[e.subject][e.topic]) subjectMap[e.subject][e.topic] = { w: 0 }; subjectMap[e.subject][e.topic].w += e.wrong; });
         const qStats = Object.entries(subjectMap).map(([s, topics]) => `${s}:\n` + Object.entries(topics).map(([t, { w }]) => `  • ${t}: ${w} wrong`).join("\n")).join("\n\n") || "No QBank data";
         const totalPages = Object.values(readingData).flat().reduce((s, e) => s + e.pages, 0);
-        const totalVids = Object.values(readingData).flat().reduce((s, e) => s + (e.videoHours||0), 0);
         prompt = `NEET PG Monthly Report
-Days: ${Object.keys(logs).length} | Pages: ${totalPages} | Video: ${totalVids.toFixed(1)}hrs | Qs: ${allQ.reduce((s, e) => s + e.total, 0)}
+Days: ${Object.keys(logs).length} | Pages: ${totalPages} | Qs: ${allQ.reduce((s, e) => s + e.total, 0)}
 READING: ${getReadingSummaryForReport(null)}
 QBANK: ${qStats}
-CURRENT AVG: ${avgPages} pg/day, ${avgVids} hr/day
 
 STRICT FORMAT — tables/bullets only, no paragraphs:
 
 🏥 MONTHLY SCORECARD
-→ Active days: [X]/30 | Avg pages/day: [X] | Avg video hrs/day: [X]
+→ Active days: [X]/30 | Avg pages/day: [X]
 → Overall accuracy: [X]% | NEET PG readiness: [X]/10
 
 📚 SUBJECT MASTERY
-Subject | Pages | Video Hrs | QBank% | Status
---------|-------|-----------|--------|-------
+Subject | Pages | QBank% | Status
+--------|-------|--------|-------
 [row per subject]
 
 🔴 TOP 5 WEAK TOPICS
@@ -430,45 +421,19 @@ Subject | Pages | Video Hrs | QBank% | Status
 2. [Subject] – [why]
 3. [Subject] – [why]
 
-🗺️ NEXT MONTH ROADMAP (Progressive Targets)
-Wk1 → [Subjects] | Daily: ${Math.round(targetPages*0.85)}pg + ${targetVids}hr video
-Wk2 → [Subjects] | Daily: ${targetPages}pg + ${(targetVids*1.1).toFixed(1)}hr video
-Wk3 → [Subjects] | Daily: ${Math.round(targetPages*1.15)}pg + ${(targetVids*1.2).toFixed(1)}hr video
+🗺️ NEXT MONTH ROADMAP
+Wk1 → [Subjects] | Daily: [X]pg + [X]Qs
+Wk2 → [Subjects] | Daily: [X]pg + [X]Qs
+Wk3 → [Subjects] | Daily: [X]pg + [X]Qs
 Wk4 → Full revision + 2 Mock tests
-
-📊 SCHEDULE vs ACTUAL ANALYSIS
-→ [Kitne din schedule follow kiya, kahan gap raha — 2 lines honest feedback]
 
 ⏳ NEET PG TIMELINE
 → At current pace: [X months] remaining
 → Must improve: [specific metric]
 
-Max 45 lines. Hindi/English mix.`;
+Max 40 lines. Hindi/English mix.`;
       }
-
-      const raw = await callAI(prompt);
-      setReportOutput(raw);
-
-      // Build chart data from readingData
-      const last7Data = getLast7DaysData();
-      const rdStats = getReadingStats();
-      const subjectChartData = Object.entries(rdStats.bySubject)
-        .sort((a,b)=>b[1].pages-a[1].pages).slice(0,8)
-        .map(([subj,d])=>({ label: subj.slice(0,6), value: d.pages }));
-      const vidChartData = Object.entries(rdStats.bySubject)
-        .filter(([,d])=>d.videoHours>0)
-        .sort((a,b)=>b[1].videoHours-a[1].videoHours).slice(0,8)
-        .map(([subj,d])=>({ label: subj.slice(0,6), value: d.videoHours }));
-
-      setReportCharts({
-        dailyPages: last7Data.map(d=>({ label: d.label, value: d.pages })),
-        dailyVids: last7Data.map(d=>({ label: d.label, value: d.vids })),
-        subjectPages: subjectChartData,
-        subjectVids: vidChartData,
-        avgPages, avgVids, targetPages, targetVids,
-        rdStats
-      });
-
+      setReportOutput(await callAI(prompt));
     } catch (e) { setReportOutput("❌ Error: " + e.message); }
     setReportLoading(false);
   };
@@ -506,7 +471,6 @@ Max 45 lines. Hindi/English mix.`;
   const todayQBank = qbankData[qbankDate] || [];
   const todayReading = readingData[rdDate] || [];
   const todayReadPages = todayReading.reduce((a, e) => a + e.pages, 0);
-  const todayVideoHours = todayReading.reduce((a, e) => a + (e.videoHours||0), 0);
   const mistakes = getMistakeSummary();
   const rdStats = getReadingStats();
 
@@ -518,80 +482,123 @@ Max 45 lines. Hindi/English mix.`;
       </div>
       <div style={s.tabs}>{TABS.map((t, i) => <button key={i} style={s.tab(tab === i)} onClick={() => setTab(i)}>{t}</button>)}</div>
 
-      {/* ═══ TAB 0: DAILY LOG ═══ */}
       {tab === 0 && <div style={s.page}>
         <div style={s.card}><label style={s.lbl}>📅 Date</label><input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={s.inp} /></div>
-
-        {/* Tomorrow's Target Card */}
-        {tomorrowTarget && (
-          <div style={{ ...s.card, background: "linear-gradient(135deg,#0d1a0d,#0a0a1e)", border: "1px solid #1a4a1a" }}>
-            <label style={{ ...s.lbl, color: "#4ade80" }}>🎯 KAL KA TARGET – {tomorrowTarget.date}</label>
-            <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
-              <div style={{ flex: 1, background: "#070f07", border: "1px solid #1a3a1a", borderRadius: "8px", padding: "10px", textAlign: "center" }}>
-                <div style={{ fontSize: "28px", fontWeight: 700, color: "#4ade80" }}>{tomorrowTarget.pages}</div>
-                <div style={{ fontSize: "9px", color: "#3a6a3a" }}>PAGES TARGET</div>
-              </div>
-              <div style={{ flex: 1, background: "#070714", border: "1px solid #1a1a3a", borderRadius: "8px", padding: "10px", textAlign: "center" }}>
-                <div style={{ fontSize: "28px", fontWeight: 700, color: "#60a5fa" }}>{tomorrowTarget.videoHrs}</div>
-                <div style={{ fontSize: "9px", color: "#3a5a8a" }}>VIDEO HRS</div>
-              </div>
-            </div>
-            {tomorrowTarget.tip && <div style={{ fontSize: "11px", color: "#a78bfa", fontStyle: "italic", borderTop: "1px solid #1a1a35", paddingTop: "8px" }}>💫 {tomorrowTarget.tip}</div>}
-          </div>
-        )}
-
         <div style={s.card}>
           <label style={s.lbl}>⏰ Hourly Log (00:00 – 23:00)</label>
           <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
-            {HOURS.map(h => <div key={h} style={s.hrRow}><div style={s.hrBadge(!!dayLog[h]?.trim())}>{h.slice(0,5)}</div><input style={s.inp} placeholder={`${h} – kya kiya?`} value={dayLog[h] || ""} onChange={e => updateHourLog(h, e.target.value)} /></div>)}
+            {HOURS.map(h => <div key={h} style={s.hrRow}><div style={s.hrBadge(!!dayLog[h]?.trim())}>{h}</div><input style={s.inp} placeholder={`${h} – kya kiya?`} value={dayLog[h] || ""} onChange={e => updateHourLog(h, e.target.value)} /></div>)}
           </div>
         </div>
+        {/* ── Today's Goals Progress ── */}
+        {getTodayGoals().length > 0 && (
+          <div style={{...s.card, background:"linear-gradient(135deg,#0a1a0a,#0d1b3e)", border:"1px solid #1a3a2a"}}>
+            <label style={s.lbl}>🎯 Aaj Ke Targets</label>
+            {getTodayGoals().map(g => {
+              const prog = getGoalProgress(g.subject, getToday());
+              const pct = prog ? prog.pct : 0;
+              const actual = prog ? prog.actual : 0;
+              return (
+                <div key={g.id} style={{marginBottom:"10px"}}>
+                  <div style={{display:"flex", justifyContent:"space-between", fontSize:"12px", marginBottom:"3px"}}>
+                    <span style={{color:"#a0d8a0", fontWeight:600}}>{g.subject}</span>
+                    <div style={{display:"flex", gap:"6px", alignItems:"center"}}>
+                      <span style={{color: pct>=100?"#4ade80":pct>=50?"#fbbf24":"#f87171", fontSize:"11px"}}>{actual}/{g.targetPages} pg</span>
+                      <span style={s.badge(pct>=100?"green":pct>=50?"blue":"red")}>{pct}%</span>
+                      <button onClick={()=>deleteGoal(getToday(),g.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#5a2a2a",fontSize:"12px"}}>✕</button>
+                    </div>
+                  </div>
+                  <div style={{height:"6px", borderRadius:"3px", background:"#1e1e35", overflow:"hidden"}}>
+                    <div style={{height:"100%", width:`${pct}%`, background: pct>=100?"linear-gradient(90deg,#22c55e,#16a34a)":pct>=50?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#ef4444,#dc2626)", transition:"width 0.3s", borderRadius:"3px"}}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-        <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-          <button style={{ ...s.btn("purple"), flex: 1, padding: "12px", fontSize: "12px" }} onClick={analyseDay} disabled={aiLoading}>
-            {aiLoading ? "🔄 Analysing..." : "🤖 Aaj ka Analysis"}
-          </button>
-          <button style={{ ...s.btn("green"), flex: 1, padding: "12px", fontSize: "12px" }} onClick={askTomorrowTarget} disabled={targetLoading}>
-            {targetLoading ? "🔄 Sooch raha hai..." : "🎯 Kal ka Target Lo"}
-          </button>
+        {/* ── Set Tomorrow's Target ── */}
+        <div style={s.card}>
+          <label style={s.lbl}>🎯 Target Set Karo</label>
+          <div style={s.row}>
+            <div style={{flex:"0 0 80px"}}>
+              <label style={s.lbl}>Date</label>
+              <input type="date" value={goalDate} onChange={e=>setGoalDate(e.target.value)} style={s.inp}/>
+            </div>
+          </div>
+          <div style={{marginBottom:"8px"}}>
+            <label style={s.lbl}>Subject</label>
+            <select value={goalSubject} onChange={e=>setGoalSubject(e.target.value)} style={s.sel}>
+              {SUBJECTS.map(sub=><option key={sub}>{sub}</option>)}
+            </select>
+          </div>
+          <div style={{marginBottom:"10px"}}>
+            <label style={s.lbl}>Page Target</label>
+            <input type="number" min="1" max="100" placeholder="e.g. 20" value={goalPages} onChange={e=>setGoalPages(e.target.value)} style={s.inp}/>
+          </div>
+          <div style={{display:"flex", gap:"8px", flexWrap:"wrap"}}>
+            <button style={s.btn("green")} onClick={saveGoal}>✅ Target Save</button>
+            <button style={s.btn("blue")} onClick={getAiGoalSuggestion} disabled={goalLoading}>
+              {goalLoading?"🔄 AI Soch Raha Hai...":"🤖 AI se Target Suggest Karwao"}
+            </button>
+          </div>
+          {aiGoalSuggestion && (
+            <div style={{...s.aiBox, marginTop:"10px"}}>
+              <div style={{fontSize:"9px",color:"#3a5a3a",marginBottom:"6px"}}>🤖 AI SUGGESTED TARGETS</div>
+              {aiGoalSuggestion}
+            </div>
+          )}
         </div>
 
+        <div style={{ textAlign: "center", marginBottom: "10px" }}>
+          <button style={{ ...s.btn("purple"), padding: "12px 28px", fontSize: "13px" }} onClick={analyseDay} disabled={aiLoading}>{aiLoading ? "🔄 Analysing..." : "🤖 AI se Aaj ka Analysis Lo"}</button>
+        </div>
         {aiAnalysis && <div style={s.aiBox}><div style={{ fontSize: "9px", color: "#5a3f8a", marginBottom: "8px" }}>🤖 AI ANALYSIS • {selectedDate}</div>{aiAnalysis}</div>}
       </div>}
 
-      {/* ═══ TAB 1: READING ═══ */}
       {tab === 1 && <div style={s.page}>
-        {/* Stats header - Pages + Video Hours */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "12px" }}>
-          <div style={{ ...s.card, background: "linear-gradient(135deg,#0d1f0d,#0a1a2e)", border: "1px solid #1a3a1a", textAlign: "center", padding: "16px", marginBottom: 0 }}>
-            <div style={{ fontSize: "11px", color: "#5a8a5a", letterSpacing: "1px", marginBottom: "4px" }}>📖 PAGES TODAY</div>
-            <div style={{ fontSize: "40px", fontWeight: 700, color: "#4ade80", lineHeight: 1 }}>{todayReadPages}</div>
-            <div style={{ fontSize: "10px", color: "#3a6a3a", marginTop: "4px" }}>{todayReading.length} sessions</div>
-          </div>
-          <div style={{ ...s.card, background: "linear-gradient(135deg,#0a0a2e,#0d1b3e)", border: "1px solid #1a1a3a", textAlign: "center", padding: "16px", marginBottom: 0 }}>
-            <div style={{ fontSize: "11px", color: "#5a5a8a", letterSpacing: "1px", marginBottom: "4px" }}>🎥 VIDEO HRS</div>
-            <div style={{ fontSize: "40px", fontWeight: 700, color: "#60a5fa", lineHeight: 1 }}>{todayVideoHours.toFixed(1)}</div>
-            <div style={{ fontSize: "10px", color: "#3a5a8a", marginTop: "4px" }}>{rdDate}</div>
-          </div>
+        <div style={{ ...s.card, background: "linear-gradient(135deg,#0d1f0d,#0a1a2e)", border: "1px solid #1a3a1a", textAlign: "center", padding: "18px" }}>
+          <div style={{ fontSize: "11px", color: "#5a8a5a", letterSpacing: "1px", marginBottom: "4px" }}>📖 AAJKE DIN KE PAGES</div>
+          <div style={{ fontSize: "52px", fontWeight: 700, color: "#4ade80", lineHeight: 1 }}>{todayReadPages}</div>
+          <div style={{ fontSize: "11px", color: "#3a6a3a", marginTop: "4px" }}>{todayReading.length} sessions • {rdDate}</div>
         </div>
 
+        {/* Reading Count Tracker */}
+        <div style={s.card}>
+          <label style={s.lbl}>🔁 Subject Reading Count — Kitni Baar Padha</label>
+          <p style={{fontSize:"11px",color:"#5a6880",marginBottom:"10px",lineHeight:"1.5"}}>
+            Har subject ki 1st, 2nd, 3rd... reading track karo. + / − se update karo.
+          </p>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px"}}>
+            {SUBJECTS.map(subj => {
+              const count = readCounts[subj] || 0;
+              const color = count === 0 ? "#2a2a45" : count === 1 ? "#7c3aed" : count === 2 ? "#2563eb" : count === 3 ? "#059669" : "#d97706";
+              const label = count === 0 ? "Not started" : count === 1 ? "1st reading" : count === 2 ? "2nd reading" : count === 3 ? "3rd reading" : `${count}th reading`;
+              return (
+                <div key={subj} style={{background:"#070714",border:`1px solid ${count>0?color+"44":"#1c1c32"}`,borderRadius:"10px",padding:"10px"}}>
+                  <div style={{fontSize:"11px",fontWeight:600,color:count>0?"#e8e0f0":"#3a3a5a",marginBottom:"6px",lineHeight:"1.3"}}>{subj}</div>
+                  <div style={{fontSize:"10px",color:count>0?color:"#2a2a45",marginBottom:"6px"}}>{label}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+                    <button onClick={()=>decrementReadCount(subj)} style={{width:"28px",height:"28px",borderRadius:"6px",border:"1px solid #2a2a45",background:"#0a0a18",color:"#f87171",cursor:"pointer",fontSize:"16px",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                    <div style={{flex:1,textAlign:"center",fontSize:"20px",fontWeight:700,color:count>0?color:"#2a2a45"}}>{count}</div>
+                    <button onClick={()=>incrementReadCount(subj)} style={{width:"28px",height:"28px",borderRadius:"6px",border:"1px solid #2a2a45",background:"#0a0a18",color:"#4ade80",cursor:"pointer",fontSize:"16px",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
         <div style={s.card}>
           <label style={s.lbl}>➕ Reading Session Add Karo</label>
           <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Date</label><input type="date" value={rdDate} onChange={e => setRdDate(e.target.value)} style={s.inp} /></div>
           <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Subject</label><select value={rdSubject} onChange={e => setRdSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub => <option key={sub}>{sub}</option>)}</select></div>
+          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Topic / Chapter</label><input placeholder="e.g. Liver Anatomy, Krebs Cycle..." value={rdTopic} onChange={e => setRdTopic(e.target.value)} style={s.inp} /></div>
           <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Source Type</label><select value={rdSource} onChange={e => setRdSource(e.target.value)} style={s.sel}>{SOURCE_TYPES.map(src => <option key={src}>{src}</option>)}</select></div>
-
-          {/* Pages + Video Hours side by side */}
           <div style={s.row}>
-            <div style={{ flex: 1 }}><label style={s.lbl}>📖 Pages Read</label><input type="number" min="0" placeholder="15" value={rdPages} onChange={e => setRdPages(e.target.value)} style={s.inp} /></div>
-            <div style={{ flex: 1 }}><label style={s.lbl}>🎥 Video Hrs</label><input type="number" min="0" step="0.25" placeholder="1.5" value={rdVideoHours} onChange={e => setRdVideoHours(e.target.value)} style={s.inp} /></div>
-          </div>
-
-          <div style={s.row}>
+            <div style={{ flex: 1 }}><label style={s.lbl}>Pages Read</label><input type="number" min="1" placeholder="15" value={rdPages} onChange={e => setRdPages(e.target.value)} style={s.inp} /></div>
             <div style={{ flex: 1 }}><label style={s.lbl}>From Page</label><input type="number" min="1" placeholder="45" value={rdFromPage} onChange={e => setRdFromPage(e.target.value)} style={s.inp} /></div>
             <div style={{ flex: 1 }}><label style={s.lbl}>To Page</label><input type="number" min="1" placeholder="60" value={rdToPage} onChange={e => setRdToPage(e.target.value)} style={s.inp} /></div>
           </div>
-
           <div style={{ marginBottom: "8px" }}>
             <label style={s.lbl}>Clarity Rating (1–5)</label>
             <div style={{ display: "flex", gap: "4px", marginTop: "4px" }}>
@@ -599,38 +606,26 @@ Max 45 lines. Hindi/English mix.`;
               <span style={{ fontSize: "11px", color: "#5a6880", alignSelf: "center", marginLeft: "4px" }}>({rdRating}/5)</span>
             </div>
           </div>
-          <div style={{ marginBottom: "10px" }}><label style={s.lbl}>🃏 Flashcards Solved</label><input type="number" min="0" placeholder="20" value={rdFlashcards} onChange={e => setRdFlashcards(e.target.value)} style={s.inp} /></div>
+          <div style={{ marginBottom: "10px" }}><label style={s.lbl}>Notes</label><textarea placeholder="Important points, doubts..." value={rdNotes} onChange={e => setRdNotes(e.target.value)} style={s.ta} /></div>
           <button style={s.btn("green")} onClick={addReadingEntry}>📖 Session Save Karo</button>
         </div>
-
         {todayReading.length > 0 && <div style={s.card}>
           <label style={s.lbl}>📋 {rdDate} ke Sessions</label>
           {todayReading.map(e => <div key={e.id} style={{ borderBottom: "1px solid #151525", padding: "9px 0" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div style={{ flex: 1 }}><span style={{ fontSize: "13px", fontWeight: 600, color: "#4ade80" }}>{e.subject}</span><span style={{ fontSize: "11px", color: "#3a6a3a", marginLeft: "6px" }}>{e.source}</span></div>
-              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                <span style={s.badge("green")}>{e.pages} pg</span>
-                {e.videoHours > 0 && <span style={s.badge("blue")}>{e.videoHours}hr 🎥</span>}
-                <button onClick={() => deleteReadingEntry(rdDate, e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#5a2a2a", fontSize: "14px" }}>✕</button>
-              </div>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}><span style={s.badge("green")}>{e.pages} pg</span><button onClick={() => deleteReadingEntry(rdDate, e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#5a2a2a", fontSize: "14px" }}>✕</button></div>
             </div>
-            {e.fromPage && e.toPage && <div style={{ fontSize: "12px", color: "#7a8aa8", marginTop: "2px" }}>p.{e.fromPage}–{e.toPage}</div>}
+            <div style={{ fontSize: "12px", color: "#7a8aa8", marginTop: "2px" }}>{e.topic}{e.fromPage && e.toPage ? ` (p.${e.fromPage}–${e.toPage})` : ""}</div>
             <div style={{ fontSize: "11px", color: "#4a5a40", marginTop: "3px" }}>{"⭐".repeat(e.rating)}{"☆".repeat(5 - e.rating)}</div>
-            {e.flashcards > 0 && <div style={{ fontSize: "11px", color: "#f59e0b", marginTop: "4px" }}>🃏 {e.flashcards} flashcards solved</div>}
+            {e.notes && <div style={{ fontSize: "11px", color: "#4a5a70", marginTop: "4px" }}>{e.notes}</div>}
           </div>)}
         </div>}
-
         {rdStats.totalPages > 0 && <div style={s.card}>
           <label style={s.lbl}>📊 Subject-wise Stats (All Time)</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "12px" }}>
-            <div style={{ background: "#070714", border: "1px solid #1a2a1a", borderRadius: "8px", textAlign: "center", padding: "10px" }}>
-              <div style={{ fontSize: "28px", fontWeight: 700, color: "#4ade80" }}>{rdStats.totalPages}</div>
-              <div style={{ fontSize: "9px", color: "#3a6a3a" }}>Total Pages</div>
-            </div>
-            <div style={{ background: "#070714", border: "1px solid #1a1a2a", borderRadius: "8px", textAlign: "center", padding: "10px" }}>
-              <div style={{ fontSize: "28px", fontWeight: 700, color: "#60a5fa" }}>{rdStats.totalVideoHours.toFixed(1)}</div>
-              <div style={{ fontSize: "9px", color: "#3a5a8a" }}>Total Video Hrs</div>
-            </div>
+          <div style={{ ...s.card, background: "#070714", border: "1px solid #1a2a1a", marginBottom: "10px", textAlign: "center" }}>
+            <div style={{ fontSize: "32px", fontWeight: 700, color: "#4ade80" }}>{rdStats.totalPages}</div>
+            <div style={{ fontSize: "10px", color: "#3a6a3a" }}>Total Pages Read Ever</div>
           </div>
           {Object.entries(rdStats.bySubject).sort((a, b) => b[1].pages - a[1].pages).map(([subj, data]) => {
             const maxPg = Math.max(...Object.values(rdStats.bySubject).map(d => d.pages));
@@ -638,11 +633,7 @@ Max 45 lines. Hindi/English mix.`;
             return <div key={subj} style={{ marginBottom: "10px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "2px" }}>
                 <span style={{ color: "#a0d8a0" }}>{subj}</span>
-                <div style={{ display: "flex", gap: "6px" }}>
-                  <span style={s.badge("green")}>{data.pages}pg</span>
-                  {data.videoHours > 0 && <span style={s.badge("blue")}>{data.videoHours.toFixed(1)}hr</span>}
-                  <span style={s.badge("blue")}>{data.sessions}x</span>
-                </div>
+                <div style={{ display: "flex", gap: "6px" }}><span style={s.badge("green")}>{data.pages}pg</span><span style={s.badge("blue")}>{data.sessions}x</span></div>
               </div>
               <div style={s.bar(Math.round(data.pages / maxPg * 100), "#22c55e")} />
               <div style={{ fontSize: "10px", color: "#3a5a3a", marginTop: "2px" }}>Mainly: {topSource}</div>
@@ -651,7 +642,6 @@ Max 45 lines. Hindi/English mix.`;
         </div>}
       </div>}
 
-      {/* ═══ TAB 2: QBANK ═══ */}
       {tab === 2 && <div style={s.page}>
         <div style={s.card}>
           <label style={s.lbl}>➕ QBank Entry</label>
@@ -692,59 +682,16 @@ Max 45 lines. Hindi/English mix.`;
         </div>}
       </div>}
 
-      {/* ═══ TAB 3: REPORTS ═══ */}
       {tab === 3 && <div style={s.page}>
         <div style={s.grid2}>
-          {[
-            { l: "Study Days", v: Object.keys(logs).length, i: "📅" },
-            { l: "Total Pages", v: rdStats.totalPages, i: "📖" },
-            { l: "Video Hours", v: rdStats.totalVideoHours.toFixed(1), i: "🎥" },
-            { l: "QBank Sessions", v: Object.values(qbankData).flat().length, i: "🧪" }
-          ].map((x, i) => (
+          {[{ l: "Study Days", v: Object.keys(logs).length, i: "📅" }, { l: "Total Pages", v: rdStats.totalPages, i: "📖" }, { l: "QBank Sessions", v: Object.values(qbankData).flat().length, i: "🧪" }, { l: "Total Wrong", v: Object.values(qbankData).flat().reduce((a, e) => a + e.wrong, 0), i: "❌" }].map((x, i) => (
             <div key={i} style={{ ...s.card, textAlign: "center", padding: "12px", marginBottom: 0 }}>
               <div style={{ fontSize: "22px" }}>{x.i}</div>
-              <div style={{ fontSize: "22px", fontWeight: 700, color: x.i === "📖" ? "#4ade80" : x.i === "🎥" ? "#60a5fa" : "#a78bfa", margin: "4px 0" }}>{x.v}</div>
+              <div style={{ fontSize: "24px", fontWeight: 700, color: x.i === "📖" ? "#4ade80" : "#a78bfa", margin: "4px 0" }}>{x.v}</div>
               <div style={{ fontSize: "10px", color: "#3a4a60" }}>{x.l}</div>
             </div>
           ))}
         </div>
-
-        {/* Graphical Charts - Always visible */}
-        {rdStats.totalPages > 0 && (() => {
-          const last7 = getLast7DaysData();
-          const hasPages = last7.some(d=>d.pages>0);
-          const hasVids = last7.some(d=>d.vids>0);
-          const subjData = Object.entries(rdStats.bySubject).sort((a,b)=>b[1].pages-a[1].pages).slice(0,7).map(([subj,d])=>({ label: subj.slice(0,5), value: d.pages }));
-          const vidSubjData = Object.entries(rdStats.bySubject).filter(([,d])=>d.videoHours>0).sort((a,b)=>b[1].videoHours-a[1].videoHours).slice(0,7).map(([subj,d])=>({ label: subj.slice(0,5), value: d.videoHours }));
-          const { avgPages, avgVids } = getAvgSpeed();
-          const daysTracked = Object.keys(readingData).length;
-          const { targetPages, targetVids } = computeTarget(avgPages, avgVids, daysTracked);
-          const maxPg = Math.max(targetPages, avgPages, 1);
-          const pctPages = Math.min(100, Math.round(avgPages/maxPg*100));
-          const pctVids = Math.min(100, Math.round(avgVids/Math.max(targetVids,0.1)*100));
-
-          return (
-            <div style={s.card}>
-              <label style={s.lbl}>📈 Progress Charts</label>
-
-              {/* Ring progress - avg vs target */}
-              <div style={{ display: "flex", justifyContent: "space-around", marginBottom: "14px", paddingTop: "8px" }}>
-                <RingProgress pct={pctPages} color="#4ade80" label={`${avgPages}/${targetPages} pg`} />
-                <RingProgress pct={pctVids} color="#60a5fa" label={`${avgVids}/${targetVids} hr`} />
-                <RingProgress pct={Math.min(100, daysTracked*3)} color="#a78bfa" label={`${daysTracked} days`} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-around", fontSize: "9px", color: "#5a6880", marginBottom: "8px" }}>
-                <span>Pages Avg/Target</span><span>Video Avg/Target</span><span>Streak</span>
-              </div>
-
-              {hasPages && <MiniBarChart data={last7.map(d=>({ label: d.label, value: d.pages }))} color="#4ade80" label="📖 Last 7 Days — Pages" />}
-              {hasVids && <MiniBarChart data={last7.map(d=>({ label: d.label, value: d.vids }))} color="#60a5fa" label="🎥 Last 7 Days — Video Hrs" />}
-              {subjData.length > 0 && <MiniBarChart data={subjData} color="#a78bfa" label="📚 Subject-wise Pages" />}
-              {vidSubjData.length > 0 && <MiniBarChart data={vidSubjData} color="#38bdf8" label="🎬 Subject-wise Video Hrs" />}
-            </div>
-          );
-        })()}
-
         <div style={s.card}>
           <label style={s.lbl}>📊 Report Type</label>
           <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap" }}>
@@ -752,24 +699,8 @@ Max 45 lines. Hindi/English mix.`;
               <button key={t} onClick={() => setReportType(t)} style={{ ...s.btn(reportType === t ? "purple" : "blue"), opacity: reportType === t ? 1 : 0.55 }}>{l}</button>
             ))}
           </div>
-          <button style={{ ...s.btn("purple"), width: "100%", padding: "13px", fontSize: "13px" }} onClick={generateReport} disabled={reportLoading}>{reportLoading ? "🔄 Generate Ho Rahi Hai..." : "⚡ AI Report Generate Karo (Reading + Schedule Analysis)"}</button>
+          <button style={{ ...s.btn("purple"), width: "100%", padding: "13px", fontSize: "13px" }} onClick={generateReport} disabled={reportLoading}>{reportLoading ? "🔄 Generate Ho Rahi Hai..." : "⚡ Report Generate Karo (1 Click)"}</button>
         </div>
-
-        {/* Report Charts after AI report */}
-        {reportCharts && (
-          <div style={s.card}>
-            <label style={s.lbl}>📊 Report Charts</label>
-            <div style={{ display: "flex", justifyContent: "space-around", marginBottom: "14px", paddingTop: "8px" }}>
-              <RingProgress pct={Math.min(100, Math.round(reportCharts.avgPages/Math.max(reportCharts.targetPages,1)*100))} color="#4ade80" label="Pages Goal" />
-              <RingProgress pct={Math.min(100, Math.round(reportCharts.avgVids/Math.max(reportCharts.targetVids,0.1)*100))} color="#60a5fa" label="Video Goal" />
-            </div>
-            {reportCharts.dailyPages.some(d=>d.value>0) && <MiniBarChart data={reportCharts.dailyPages} color="#4ade80" label="Last 7 Days Pages" />}
-            {reportCharts.dailyVids.some(d=>d.value>0) && <MiniBarChart data={reportCharts.dailyVids} color="#60a5fa" label="Last 7 Days Video Hrs" />}
-            {reportCharts.subjectPages.length > 0 && <MiniBarChart data={reportCharts.subjectPages} color="#a78bfa" label="Subject Pages" />}
-            {reportCharts.subjectVids.length > 0 && <MiniBarChart data={reportCharts.subjectVids} color="#38bdf8" label="Subject Video Hrs" />}
-          </div>
-        )}
-
         {reportOutput && <div style={s.card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
             <label style={s.lbl}>📋 {reportType.toUpperCase()} REPORT</label>
@@ -782,7 +713,6 @@ Max 45 lines. Hindi/English mix.`;
         </div>}
       </div>}
 
-      {/* ═══ TAB 4: SETTINGS ═══ */}
       {tab === 4 && <div style={s.page}>
         <div style={s.card}>
           <label style={s.lbl}>🔑 Gemini API Key (Required for AI)</label>
@@ -798,38 +728,115 @@ Max 45 lines. Hindi/English mix.`;
           }
         </div>
         <div style={s.card}>
-          <label style={s.lbl}>📚 19 Subjects – Progress</label>
-          {SUBJECTS.map((subj, i) => {
-            const qd = Object.values(qbankData).flat().filter(e => e.subject === subj);
-            const qt = qd.reduce((a, e) => a + e.total, 0), qw = qd.reduce((a, e) => a + e.wrong, 0);
-            const acc = qt ? Math.round((1 - qw / qt) * 100) : null;
-            const rp = Object.values(readingData).flat().filter(e => e.subject === subj).reduce((a, e) => a + e.pages, 0);
-            const rv = Object.values(readingData).flat().filter(e => e.subject === subj).reduce((a, e) => a + (e.videoHours||0), 0);
-            return <div key={subj} style={{ borderBottom: "1px solid #111124", padding: "7px 0", fontSize: "12px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ color: "#b0a0d8" }}>{i + 1}. {subj}</span>
-                <div style={{ display: "flex", gap: "5px" }}>
-                  {rp > 0 && <span style={s.badge("green")}>{rp}pg</span>}
-                  {rv > 0 && <span style={s.badge("blue")}>{rv.toFixed(1)}hr</span>}
-                  {acc !== null ? <span style={s.badge(acc >= 70 ? "green" : "red")}>{acc}%</span> : <span style={{ color: "#252535", fontSize: "10px" }}>–</span>}
-                </div>
+          <label style={s.lbl}>📚 19 Subjects – Complete Progress</label>
+
+          {/* Summary Stats */}
+          {(() => {
+            const totalPages = Object.values(readingData).flat().reduce((a,e)=>a+e.pages,0);
+            const startedSubjects = SUBJECTS.filter(sub => Object.values(readingData).flat().some(e=>e.subject===sub)).length;
+            const totalQs = Object.values(qbankData).flat().reduce((a,e)=>a+e.total,0);
+            return (
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"6px",marginBottom:"12px"}}>
+                {[
+                  {l:"Total Pages",v:totalPages,c:"#4ade80"},
+                  {l:"Subjects Started",v:`${startedSubjects}/19`,c:"#a78bfa"},
+                  {l:"Total QBank",v:totalQs,c:"#60a5fa"},
+                ].map((x,i)=>(
+                  <div key={i} style={{background:"#070714",border:"1px solid #1c1c32",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
+                    <div style={{fontSize:"18px",fontWeight:700,color:x.c}}>{x.v}</div>
+                    <div style={{fontSize:"9px",color:"#3a4a60",marginTop:"2px"}}>{x.l}</div>
+                  </div>
+                ))}
               </div>
-            </div>;
+            );
+          })()}
+
+          {/* Per Subject Detail */}
+          {SUBJECTS.map((subj, i) => {
+            const allEntries = Object.values(readingData).flat().filter(e => e.subject === subj);
+            const rp = allEntries.reduce((a,e) => a+e.pages, 0);
+            const sessions = allEntries.length;
+            const sources = [...new Set(allEntries.map(e=>e.source))];
+            const avgRating = sessions > 0 ? (allEntries.reduce((a,e)=>a+e.rating,0)/sessions).toFixed(1) : null;
+            const lastRead = allEntries.length > 0 ? allEntries.sort((a,b)=>b.date.localeCompare(a.date))[0].date : null;
+
+            const qd = Object.values(qbankData).flat().filter(e => e.subject === subj);
+            const qt = qd.reduce((a,e) => a+e.total, 0);
+            const qw = qd.reduce((a,e) => a+e.wrong, 0);
+            const acc = qt ? Math.round((1-qw/qt)*100) : null;
+
+            const maxPages = Math.max(...SUBJECTS.map(s => Object.values(readingData).flat().filter(e=>e.subject===s).reduce((a,e)=>a+e.pages,0)), 1);
+            const barPct = rp > 0 ? Math.round(rp/maxPages*100) : 0;
+
+            const status = rp === 0 && qt === 0 ? "not_started"
+              : rp > 0 && acc !== null && acc >= 70 ? "strong"
+              : rp > 0 ? "reading"
+              : "qbank_only";
+
+            const statusColor = status==="strong"?"#4ade80":status==="reading"?"#fbbf24":status==="qbank_only"?"#60a5fa":"#3a3a5a";
+            const statusLabel = status==="strong"?"✅":status==="reading"?"📖":status==="qbank_only"?"🧪":"○";
+
+            return (
+              <div key={subj} style={{borderBottom:"1px solid #111124",padding:"10px 0"}}>
+                {/* Subject name + status */}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+                    <span style={{fontSize:"12px",color:statusColor}}>{statusLabel}</span>
+                    <span style={{fontSize:"12px",fontWeight:600,color:rp>0?"#c4b5fd":"#4a4a6a"}}>{i+1}. {subj}</span>
+                  </div>
+                  <div style={{display:"flex",gap:"4px",alignItems:"center"}}>
+                    {rp>0 && <span style={s.badge("green")}>{rp}pg</span>}
+                    {acc!==null && <span style={s.badge(acc>=70?"green":"red")}>{acc}%</span>}
+                    {rp===0 && qt===0 && <span style={{fontSize:"10px",color:"#2a2a45"}}>not started</span>}
+                  </div>
+                </div>
+
+                {/* Progress bar */}
+                {rp > 0 && (
+                  <div style={{height:"4px",borderRadius:"2px",background:"#1e1e35",marginBottom:"4px",overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${barPct}%`,background:"linear-gradient(90deg,#7c3aed,#4ade80)",borderRadius:"2px"}}/>
+                  </div>
+                )}
+
+                {/* Detail row */}
+                {rp > 0 && (
+                  <div style={{display:"flex",gap:"8px",flexWrap:"wrap",fontSize:"10px",color:"#4a5a70"}}>
+                    {sessions > 0 && <span>📖 {sessions} sessions</span>}
+                    {readCounts[subj] > 0 && <span style={{color:"#a78bfa",fontWeight:600}}>🔁 {readCounts[subj] === 1 ? "1st" : readCounts[subj] === 2 ? "2nd" : readCounts[subj] === 3 ? "3rd" : readCounts[subj]+"th"} reading</span>}
+                    {avgRating && <span>⭐ {avgRating}/5</span>}
+                    {sources.length > 0 && <span>📄 {sources.join(", ")}</span>}
+                    {lastRead && <span>🗓 Last: {lastRead}</span>}
+                  </div>
+                )}
+              </div>
+            );
           })}
         </div>
         <div style={s.card}>
-          <label style={s.lbl}>🗑️ Data Management</label>
+          <label style={s.lbl}>💾 Backup & Restore</label>
+          <p style={{fontSize:"11px", color:"#5a8a5a", marginBottom:"10px", lineHeight:"1.6", background:"#0a1a0a", padding:"8px", borderRadius:"6px", border:"1px solid #1a3a1a"}}>
+            ⚠️ Data sirf is browser mein hai — weekly backup lo!
+          </p>
+          <div style={{display:"flex", gap:"8px", flexWrap:"wrap", marginBottom:"12px"}}>
+            <button style={{...s.btn("green"), fontSize:"13px", padding:"11px 18px"}} onClick={exportData}>
+              📥 Export Backup (.json)
+            </button>
+            <button style={{...s.btn("blue"), fontSize:"13px", padding:"11px 18px"}} onClick={() => importRef.current.click()}>
+              📤 Import Backup
+            </button>
+            <input type="file" ref={importRef} accept=".json" style={{display:"none"}} onChange={importData}/>
+          </div>
+          <label style={{...s.lbl, marginTop:"8px"}}>🗑️ Delete Data</label>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <button style={s.btn("red")} onClick={() => { if (window.confirm("Daily logs delete?")) { setLogs({}); localStorage.removeItem("daily_logs"); } }}>🗑️ Daily</button>
             <button style={s.btn("red")} onClick={() => { if (window.confirm("Reading data delete?")) { setReadingData({}); localStorage.removeItem("reading_data"); } }}>🗑️ Reading</button>
             <button style={s.btn("red")} onClick={() => { if (window.confirm("QBank data delete?")) { setQbankData({}); localStorage.removeItem("qbank_data"); } }}>🗑️ QBank</button>
-            <button style={s.btn("red")} onClick={() => { if (window.confirm("Tomorrow target delete?")) { setTomorrowTarget(null); localStorage.removeItem("tomorrow_target"); } }}>🗑️ Target</button>
           </div>
         </div>
         <div style={{ ...s.card, textAlign: "center" }}>
           <div style={{ fontSize: "28px", marginBottom: "6px" }}>🩺</div>
-          <div style={{ fontSize: "13px", color: "#6a7a98" }}>MedTracker Pro v3.0</div>
-          <div style={{ fontSize: "10px", color: "#353545", marginTop: "4px" }}>Progressive Targets • Video Tracking • Chart Analytics</div>
+          <div style={{ fontSize: "13px", color: "#6a7a98" }}>MedTracker Pro v2.0</div>
+          <div style={{ fontSize: "10px", color: "#353545", marginTop: "4px" }}>GitHub Pages Edition • No npm needed</div>
         </div>
       </div>}
     </div>
