@@ -113,7 +113,33 @@ function App() {
     try {
       const logText = filled.map(([h, v]) => `${h} – ${v}`).join("\n");
       const readToday = (readingData[selectedDate] || []).map(e => `${e.subject}/${e.topic}: ${e.pages}pg (${e.source})`).join("\n") || "No reading logged";
-      const prompt = `You are a strict but caring MBBS study coach. Analyse this student's day – ${selectedDate}:\n\nHOURLY LOG:\n${logText}\n\nREADING TODAY:\n${readToday}\n\nGive:\n1. 🕐 Time wasted (which hours & why)\n2. 📚 Study efficiency score /10\n3. 📖 Reading pace assessment\n4. 💡 3 specific improvements for tomorrow\n5. 🎯 MBBS 19-subject alignment tips\nBe concise, Hindi/English mix.`;
+      const prompt = `You are a NEET PG preparation coach. Student's day: ${selectedDate}
+
+HOURLY LOG: ${logText}
+READING: ${readToday}
+
+Reply in STRICT point format — NO paragraphs, NO essays:
+
+⏰ TIME AUDIT
+→ Productive: [X hrs] | Wasted: [X hrs]
+[each wasted slot]: HH:00 → [reason, 4 words max]
+
+📊 NEET PG EFFICIENCY: [X]/10
+
+⚡ BIGGEST MISTAKE TODAY
+→ [1 line only]
+
+✅ KAL KA PLAN (3 points)
+1. [time] → [subject/topic]
+2. [time] → [subject/topic]  
+3. [time] → [subject/topic]
+
+🎯 SUBJECT PRIORITY
+🔴 Urgent → [subject]
+🟡 Important → [subject]
+🟢 On track → [subject]
+
+STRICT: Max 20 lines. Hindi/English mix.`;
       setAiAnalysis(await callAI(prompt));
     } catch (e) { setAiAnalysis("❌ Error: " + e.message); }
     setAiLoading(false);
@@ -150,7 +176,35 @@ function App() {
         const logText = Object.entries(dayLog).filter(([, v]) => v?.trim()).map(([h, v]) => `${h}: ${v}`).join("\n") || "No hourly logs";
         const qText = qToday.map(e => `${e.subject}/${e.topic}: ${e.wrong}/${e.total} wrong`).join("\n") || "No QBank today";
         const rdText = rdToday.map(e => `${e.subject}/${e.topic}: ${e.pages}pg from ${e.source} [rating:${e.rating}/5]`).join("\n") || "No reading today";
-        prompt = `DAILY REPORT for MBBS student – ${today}\n\nHOURLY LOG:\n${logText}\n\nREADING (Total: ${rdToday.reduce((s, e) => s + e.pages, 0)} pages):\n${rdText}\n\nQBANK:\n${qText}\n\nProvide: 📊 Summary, 📖 Reading analysis, ✅ Well done, ❌ Needs improvement, 🎯 Tomorrow's action plan, ⏱️ Study hours estimate. Detailed. Hindi/English mix.`;
+        prompt = `NEET PG Daily Report – ${today}
+LOG: ${logText}
+READING: ${rdText}
+QBANK: ${qText}
+
+STRICT FORMAT — bullets/points only, no paragraphs:
+
+📅 SNAPSHOT
+→ Study: [X]hrs | Pages: [X] | QBank: [X]Qs | Accuracy: [X]%
+
+✅ WINS (max 2)
+• [point]
+• [point]
+
+❌ GAPS (max 2)
+• [point]
+• [point]
+
+📖 READING → [pace: fast/ok/slow] | [source used]
+🧪 QBANK → [strong/weak] | [subject]
+
+🎯 TOMORROW TIMETABLE
+06:00–08:00 → [subject/topic]
+08:00–10:00 → [subject/topic]
+14:00–16:00 → [subject/topic]
+18:00–20:00 → [subject/topic]
+20:00–22:00 → QBank ([X] questions)
+
+Max 25 lines. Hindi/English mix.`;
       } else if (reportType === "weekly") {
         const allDates = Object.keys(logs).sort().slice(-7);
         const weekLogs = allDates.map(d => `${d}: ${Object.values(logs[d]).filter(Boolean).length} active slots`).join("\n") || "No data";
@@ -159,14 +213,83 @@ function App() {
         weekQ.forEach(e => { if (!subStats[e.subject]) subStats[e.subject] = { w: 0, t: 0 }; subStats[e.subject].w += e.wrong; subStats[e.subject].t += e.total; });
         const qSummary = Object.entries(subStats).map(([s, { w, t }]) => `${s}: ${w}/${t} wrong`).join("\n") || "No QBank data";
         const weeklyPages = allDates.flatMap(d => readingData[d] || []).reduce((s, e) => s + e.pages, 0);
-        prompt = `WEEKLY REPORT for MBBS student (last 7 days)\n\nACTIVITY:\n${weekLogs}\n\nREADING (Total: ${weeklyPages} pages):\n${getReadingSummaryForReport(7)}\n\nQBANK:\n${qSummary}\n\nProvide: 📈 Score /10, 📖 Reading consistency, 🔴 Top 3 weak topics, 🏆 Strong subjects, 📅 Next week plan, 🎯 MBBS completion estimate. Motivating. Hindi/English mix.`;
+        prompt = `NEET PG Weekly Report (last 7 days)
+ACTIVITY: ${weekLogs}
+READING (${weeklyPages}pg): ${getReadingSummaryForReport(7)}
+QBANK: ${qSummary}
+
+STRICT FORMAT — no paragraphs:
+
+📊 WEEK SCORECARD
+→ Score: [X]/10 | Avg hrs/day: [X] | Pages: ${weeklyPages} | Accuracy: [X]%
+
+📚 SUBJECT TABLE (tracked subjects only)
+Subject → Pages | QBank% | Status(✅/⚠️/🔴)
+
+🔴 FIX NEXT WEEK (top 3)
+1. [Subject→Topic] – [why, 5 words]
+2. [Subject→Topic] – [why, 5 words]
+3. [Subject→Topic] – [why, 5 words]
+
+🏆 STRONGEST THIS WEEK
+→ [Subject] – [reason]
+
+📅 NEXT WEEK FLOW
+Mon–Tue → [Subject] + [QBank target]
+Wed–Thu → [Subject] + [QBank target]
+Fri–Sat → [Subject] + [QBank target]
+Sun     → Revision + Mock
+
+⏳ NEET PG PACE
+→ Current pace se syllabus: [X months]
+→ Target: [adjustment needed?]
+
+Max 30 lines. Hindi/English mix.`;
       } else {
         const allQ = Object.values(qbankData).flat();
         const subjectMap = {};
         allQ.forEach(e => { if (!subjectMap[e.subject]) subjectMap[e.subject] = {}; if (!subjectMap[e.subject][e.topic]) subjectMap[e.subject][e.topic] = { w: 0 }; subjectMap[e.subject][e.topic].w += e.wrong; });
         const qStats = Object.entries(subjectMap).map(([s, topics]) => `${s}:\n` + Object.entries(topics).map(([t, { w }]) => `  • ${t}: ${w} wrong`).join("\n")).join("\n\n") || "No QBank data";
         const totalPages = Object.values(readingData).flat().reduce((s, e) => s + e.pages, 0);
-        prompt = `MONTHLY MBBS REPORT\n\nTotal days: ${Object.keys(logs).length}\nTotal pages: ${totalPages}\nTotal QBank Qs: ${allQ.reduce((s, e) => s + e.total, 0)}\n\nREADING BY SUBJECT:\n${getReadingSummaryForReport(null)}\n\nQBANK MISTAKES:\n${qStats}\n\nProvide: 📊 Overview, 📖 Reading per subject progress, 🔴 Top 5 weak topics, ✅ Strong areas, 🗺️ Revision roadmap, ⏳ 19-subject completion timeline. Very detailed. Hindi/English mix.`;
+        prompt = `NEET PG Monthly Report
+Days: ${Object.keys(logs).length} | Pages: ${totalPages} | Qs: ${allQ.reduce((s, e) => s + e.total, 0)}
+READING: ${getReadingSummaryForReport(null)}
+QBANK: ${qStats}
+
+STRICT FORMAT — tables/bullets only, no paragraphs:
+
+🏥 MONTHLY SCORECARD
+→ Active days: [X]/30 | Avg pages/day: [X]
+→ Overall accuracy: [X]% | NEET PG readiness: [X]/10
+
+📚 SUBJECT MASTERY
+Subject | Pages | QBank% | Status
+--------|-------|--------|-------
+[row per subject]
+
+🔴 TOP 5 WEAK TOPICS
+1. [Sub→Topic] – [fix this: action]
+2. [Sub→Topic] – [fix this: action]
+3. [Sub→Topic] – [fix this: action]
+4. [Sub→Topic] – [fix this: action]
+5. [Sub→Topic] – [fix this: action]
+
+✅ TOP 3 STRONG
+1. [Subject] – [why]
+2. [Subject] – [why]
+3. [Subject] – [why]
+
+🗺️ NEXT MONTH ROADMAP
+Wk1 → [Subjects] | Daily: [X]pg + [X]Qs
+Wk2 → [Subjects] | Daily: [X]pg + [X]Qs
+Wk3 → [Subjects] | Daily: [X]pg + [X]Qs
+Wk4 → Full revision + 2 Mock tests
+
+⏳ NEET PG TIMELINE
+→ At current pace: [X months] remaining
+→ Must improve: [specific metric]
+
+Max 40 lines. Hindi/English mix.`;
       }
       setReportOutput(await callAI(prompt));
     } catch (e) { setReportOutput("❌ Error: " + e.message); }
