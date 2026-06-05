@@ -40,8 +40,6 @@ function App() {
   const [rdToPage, setRdToPage] = useState("");
   const [rdNotes, setRdNotes] = useState("");
   const [rdRating, setRdRating] = useState("3");
-  // Reading count — kitni baar subject padha (1st reading, 2nd reading, etc)
-  const [readCounts, setReadCounts] = useState(() => { try { return JSON.parse(localStorage.getItem("read_counts") || "{}"); } catch { return {}; } });
   const [qbankData, setQbankData] = useState(() => { try { return JSON.parse(localStorage.getItem("qbank_data") || "{}"); } catch { return {}; } });
   const [qbankDate, setQbankDate] = useState(getToday());
   const [qbankSubject, setQbankSubject] = useState(SUBJECTS[0]);
@@ -52,148 +50,73 @@ function App() {
   const [screenshotAnalysis, setScreenshotAnalysis] = useState("");
   const [ssLoading, setSsLoading] = useState(false);
   const fileRef = useRef();
-  const importRef = useRef();
   const [reportType, setReportType] = useState("daily");
-  const [reportOutput, setReportOutput] = useState("");
-  const [reportLoading, setReportLoading] = useState(false);
-
-  // Goals system
   const [goals, setGoals] = useState(() => { try { return JSON.parse(localStorage.getItem("daily_goals") || "{}"); } catch { return {}; } });
   const [goalSubject, setGoalSubject] = useState(SUBJECTS[0]);
   const [goalPages, setGoalPages] = useState("");
   const [goalDate, setGoalDate] = useState(getToday());
   const [aiGoalSuggestion, setAiGoalSuggestion] = useState("");
   const [goalLoading, setGoalLoading] = useState(false);
+  const [readCounts, setReadCounts] = useState(() => { try { return JSON.parse(localStorage.getItem("read_counts") || "{}"); } catch { return {}; } });
+  const [reportOutput, setReportOutput] = useState("");
+  const [reportLoading, setReportLoading] = useState(false);
 
   useEffect(() => localStorage.setItem("daily_logs", JSON.stringify(logs)), [logs]);
   useEffect(() => localStorage.setItem("qbank_data", JSON.stringify(qbankData)), [qbankData]);
   useEffect(() => localStorage.setItem("reading_data", JSON.stringify(readingData)), [readingData]);
-  useEffect(() => localStorage.setItem("read_counts", JSON.stringify(readCounts)), [readCounts]);
   useEffect(() => localStorage.setItem("daily_goals", JSON.stringify(goals)), [goals]);
+  useEffect(() => localStorage.setItem("read_counts", JSON.stringify(readCounts)), [readCounts]);
 
-  const saveApiKey = () => { localStorage.setItem("gemini_key", apiKeyInput); setApiKey(apiKeyInput); alert("✅ API Key saved!"); };
+  const saveApiKey = () => { localStorage.setItem("gemini_key", apiKeyInput); setApiKey(apiKeyInput); alert("API Key saved!"); };
 
   const exportData = () => {
-    const data = {
-      version: "2.0",
-      exportDate: new Date().toISOString(),
-      daily_logs: logs,
-      reading_data: readingData,
-      read_counts: readCounts,
-      qbank_data: qbankData,
-      daily_goals: goals,
-    };
-    const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
+    const data = { version:"2.0", exportDate:new Date().toISOString(), daily_logs:logs, reading_data:readingData, qbank_data:qbankData, daily_goals:goals, read_counts:readCounts };
+    const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `MedTracker_Backup_${getToday()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const a = document.createElement("a"); a.href=url; a.download=`MedTracker_Backup_${getToday()}.json`; a.click(); URL.revokeObjectURL(url);
   };
 
+  const importRef = React.useRef();
   const importData = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const file = e.target.files[0]; if(!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        if (!data.daily_logs && !data.reading_data && !data.qbank_data) {
-          alert("❌ Invalid backup file!"); return;
-        }
-        if (!window.confirm("Purana data replace ho jaayega. Confirm?")) return;
-        if (data.daily_logs) { setLogs(data.daily_logs); localStorage.setItem("daily_logs", JSON.stringify(data.daily_logs)); }
-        if (data.reading_data) { setReadingData(data.reading_data); localStorage.setItem("reading_data", JSON.stringify(data.reading_data)); }
-        if (data.read_counts) { setReadCounts(data.read_counts); localStorage.setItem("read_counts", JSON.stringify(data.read_counts)); }
-        if (data.qbank_data) { setQbankData(data.qbank_data); localStorage.setItem("qbank_data", JSON.stringify(data.qbank_data)); }
-        if (data.daily_goals) { setGoals(data.daily_goals); localStorage.setItem("daily_goals", JSON.stringify(data.daily_goals)); }
-        alert("✅ Data successfully import ho gaya!");
-      } catch(err) { alert("❌ File read error: " + err.message); }
+        if(!window.confirm("Purana data replace hoga. Sure?")) return;
+        if(data.daily_logs){setLogs(data.daily_logs);localStorage.setItem("daily_logs",JSON.stringify(data.daily_logs));}
+        if(data.reading_data){setReadingData(data.reading_data);localStorage.setItem("reading_data",JSON.stringify(data.reading_data));}
+        if(data.qbank_data){setQbankData(data.qbank_data);localStorage.setItem("qbank_data",JSON.stringify(data.qbank_data));}
+        if(data.daily_goals){setGoals(data.daily_goals);localStorage.setItem("daily_goals",JSON.stringify(data.daily_goals));}
+        if(data.read_counts){setReadCounts(data.read_counts);localStorage.setItem("read_counts",JSON.stringify(data.read_counts));}
+        alert("Data import ho gaya!");
+      } catch(err){alert("Error: "+err.message);}
     };
-    reader.readAsText(file);
-    e.target.value = "";
+    reader.readAsText(file); e.target.value="";
   };
 
   const saveGoal = () => {
-    if (!goalPages || +goalPages < 1) { alert("Pages target bharo!"); return; }
-    const key = goalDate;
-    const existing = goals[key] || [];
-    const updated = existing.filter(g => g.subject !== goalSubject);
-    updated.push({ subject: goalSubject, targetPages: +goalPages, date: goalDate, id: Date.now() });
-    setGoals(prev => ({ ...prev, [key]: updated }));
+    if(!goalPages||+goalPages<1){alert("Pages target bharo!");return;}
+    const existing=(goals[goalDate]||[]).filter(g=>g.subject!==goalSubject);
+    existing.push({subject:goalSubject,targetPages:+goalPages,date:goalDate,id:Date.now()});
+    setGoals(prev=>({...prev,[goalDate]:existing}));
     setGoalPages("");
-    alert(`✅ Target set: ${goalSubject} – ${goalPages} pages on ${goalDate}`);
   };
-
-  const deleteGoal = (date, id) => setGoals(prev => ({ ...prev, [date]: (prev[date]||[]).filter(g => g.id !== id) }));
-
-  const getTodayGoals = () => goals[getToday()] || [];
-
-  const getGoalProgress = (subject, date) => {
-    const target = (goals[date]||[]).find(g => g.subject === subject);
-    const actual = (readingData[date]||[]).filter(e => e.subject === subject).reduce((s,e) => s+e.pages, 0);
-    return target ? { target: target.targetPages, actual, pct: Math.min(100, Math.round(actual/target.targetPages*100)) } : null;
+  const deleteGoal = (date,id) => setGoals(prev=>({...prev,[date]:(prev[date]||[]).filter(g=>g.id!==id)}));
+  const getTodayGoals = () => goals[getToday()]||[];
+  const getGoalProgress = (subject,date) => {
+    const target=(goals[date]||[]).find(g=>g.subject===subject);
+    const actual=(readingData[date]||[]).filter(e=>e.subject===subject).reduce((s,e)=>s+e.pages,0);
+    return target?{target:target.targetPages,actual,pct:Math.min(100,Math.round(actual/target.targetPages*100))}:null;
   };
-
-  const getAiGoalSuggestion = async () => {
-    setGoalLoading(true); setAiGoalSuggestion("");
-    try {
-      // Build history: last 7 days reading per subject
-      const last7 = Object.entries(readingData).sort().slice(-7);
-      const history = {};
-      last7.forEach(([date, entries]) => {
-        entries.forEach(e => {
-          if (!history[e.subject]) history[e.subject] = [];
-          history[e.subject].push({ date, pages: e.pages });
-        });
-      });
-      const histText = Object.entries(history).map(([s,arr]) => {
-        const avg = Math.round(arr.reduce((a,e)=>a+e.pages,0)/arr.length);
-        return \`\${s}: avg \${avg}pg/day (last \${arr.length} sessions)\`;
-      }).join("\n") || "No reading history yet";
-
-      const todayGoalsList = getTodayGoals().map(g=>\`\${g.subject}: \${g.targetPages}pg\`).join(", ") || "None set";
-      const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
-      const tomorrowStr = tomorrow.toISOString().split("T")[0];
-
-      const prompt = \`You are a NEET PG study coach. Suggest tomorrow's reading targets.
-
-STUDENT'S READING HISTORY (last 7 days):
-\${histText}
-
-TODAY'S TARGETS: \${todayGoalsList}
-
-Rules for suggestions:
-- Start SMALL if new subject (10-15 pages)
-- Increase by 5-10% each day if target was met
-- Decrease by 10% if target was missed 2 days in a row
-- Max 30 pages per subject per day
-- Suggest max 2-3 subjects per day
-- Focus on NEET PG high-yield subjects
-
-Reply in EXACT format:
-📅 TARGETS FOR TOMORROW (\${tomorrowStr})
-
-Subject | Target | Reason
---------|--------|-------
-[Subject] | [X] pages | [why, 5 words]
-[Subject] | [X] pages | [why, 5 words]
-
-💡 STRATEGY: [1 line tip for tomorrow]
-⚡ PRIORITY ORDER: [Subject1] → [Subject2] → [Subject3]\`;
-
-      setAiGoalSuggestion(await callAI(prompt));
-    } catch(e) { setAiGoalSuggestion("❌ Error: " + e.message); }
-    setGoalLoading(false);
-  };
+  const incrementReadCount = (subject) => setReadCounts(prev=>({...prev,[subject]:(prev[subject]||0)+1}));
+  const decrementReadCount = (subject) => setReadCounts(prev=>({...prev,[subject]:Math.max(0,(prev[subject]||0)-1)}));
   const updateHourLog = (hour, val) => setLogs(prev => ({ ...prev, [selectedDate]: { ...(prev[selectedDate] || {}), [hour]: val } }));
   const getDayLogs = (date) => logs[date] || {};
 
   const callAI = async (prompt, images = []) => {
     const key = localStorage.getItem("gemini_key") || "";
-    if (!key) throw new Error("⚠️ Gemini API Key nahi hai! Settings tab mein jaake key daalo. Free key: aistudio.google.com/apikey");
+    if (!key) throw new Error("Gemini API Key nahi hai! Settings tab > API Key field mein daalo. Free: aistudio.google.com/apikey");
     const parts = [];
     for (const img of images) {
       if (img.source && img.source.data) {
@@ -209,13 +132,6 @@ Subject | Target | Reason
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
     return data.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "No response";
-  };
-
-  const incrementReadCount = (subject) => {
-    setReadCounts(prev => ({ ...prev, [subject]: (prev[subject] || 0) + 1 }));
-  };
-  const decrementReadCount = (subject) => {
-    setReadCounts(prev => ({ ...prev, [subject]: Math.max(0, (prev[subject] || 0) - 1) }));
   };
 
   const addReadingEntry = () => {
@@ -249,41 +165,18 @@ Subject | Target | Reason
     try {
       const logText = filled.map(([h, v]) => `${h} – ${v}`).join("\n");
       const readToday = (readingData[selectedDate] || []).map(e => `${e.subject}/${e.topic}: ${e.pages}pg (${e.source})`).join("\n") || "No reading logged";
-      const todayGoals = (goals[selectedDate]||[]).map(g=>{
-        const prog = getGoalProgress(g.subject, selectedDate);
-        return `${g.subject}: target ${g.targetPages}pg → actual ${prog?prog.actual:0}pg (${prog?prog.pct:0}%)`;
-      }).join("\n") || "No targets set";
-      const prompt = `NEET PG Daily Coach – ${selectedDate}
-
+      const prompt = `NEET PG Daily Coach - ${selectedDate}
 HOURLY LOG: ${logText}
 READING: ${readToday}
-TODAY'S TARGETS vs ACTUAL:
-${todayGoals}
-
-Reply in STRICT point format — NO paragraphs:
-
-⏰ TIME AUDIT
-→ Productive: [X]hrs | Wasted: [X]hrs
-[each wasted slot as]: HH:00 → [reason, 4 words]
-
-📊 NEET PG EFFICIENCY: [X]/10
-
-🎯 TARGET REPORT
-[for each subject with target]:
-[Subject]: [X/Y pages] → [✅ Met / ⚠️ Partial / ❌ Missed]
-
-⚡ IMPROVEMENT (1 line only)
-→ [most important change needed]
-
-📅 KAL KA SUGGESTED TARGET
-[Subject] → [X] pages ([increase/same/decrease from today])
-[Subject] → [X] pages ([increase/same/decrease from today])
-
-💡 TIP: [1 line NEET PG specific advice]
-
-STRICT: Max 20 lines. Hindi/English mix.`;
+Reply in points only - NO paragraphs:
+TIME AUDIT: Productive [X]hrs | Wasted [X]hrs | list wasted slots
+EFFICIENCY: [X]/10
+BIGGEST MISTAKE: [1 line]
+KAL KA PLAN: 1.[time subject] 2.[time subject] 3.[time subject]
+SUBJECT PRIORITY: RED-[sub] YELLOW-[sub] GREEN-[sub]
+Max 20 lines. Hindi/English mix.`;
       setAiAnalysis(await callAI(prompt));
-    } catch (e) { setAiAnalysis("❌ Error: " + e.message); }
+    } catch (e) { setAiAnalysis("Error: " + e.message); }
     setAiLoading(false);
   };
 
@@ -305,7 +198,7 @@ STRICT: Max 20 lines. Hindi/English mix.`;
       setScreenshotAnalysis(text);
       const today = getToday();
       setQbankData(prev => ({ ...prev, [today]: [...(prev[today] || []), { date: today, subject: "Mixed (SS)", topic: `Screenshot Batch – ${files.length} imgs`, total: files.length, wrong: files.length, notes: text.substring(0, 300), id: Date.now() }] }));
-    } catch (e) { setScreenshotAnalysis("❌ Error: " + e.message); }
+    } catch (e) { setScreenshotAnalysis("Error: " + e.message); }
     setSsLoading(false);
   };
 
@@ -318,35 +211,7 @@ STRICT: Max 20 lines. Hindi/English mix.`;
         const logText = Object.entries(dayLog).filter(([, v]) => v?.trim()).map(([h, v]) => `${h}: ${v}`).join("\n") || "No hourly logs";
         const qText = qToday.map(e => `${e.subject}/${e.topic}: ${e.wrong}/${e.total} wrong`).join("\n") || "No QBank today";
         const rdText = rdToday.map(e => `${e.subject}/${e.topic}: ${e.pages}pg from ${e.source} [rating:${e.rating}/5]`).join("\n") || "No reading today";
-        prompt = `NEET PG Daily Report – ${today}
-LOG: ${logText}
-READING: ${rdText}
-QBANK: ${qText}
-
-STRICT FORMAT — bullets/points only, no paragraphs:
-
-📅 SNAPSHOT
-→ Study: [X]hrs | Pages: [X] | QBank: [X]Qs | Accuracy: [X]%
-
-✅ WINS (max 2)
-• [point]
-• [point]
-
-❌ GAPS (max 2)
-• [point]
-• [point]
-
-📖 READING → [pace: fast/ok/slow] | [source used]
-🧪 QBANK → [strong/weak] | [subject]
-
-🎯 TOMORROW TIMETABLE
-06:00–08:00 → [subject/topic]
-08:00–10:00 → [subject/topic]
-14:00–16:00 → [subject/topic]
-18:00–20:00 → [subject/topic]
-20:00–22:00 → QBank ([X] questions)
-
-Max 25 lines. Hindi/English mix.`;
+        prompt = `DAILY REPORT for MBBS student – ${today}\n\nHOURLY LOG:\n${logText}\n\nREADING (Total: ${rdToday.reduce((s, e) => s + e.pages, 0)} pages):\n${rdText}\n\nQBANK:\n${qText}\n\nProvide: 📊 Summary, 📖 Reading analysis, ✅ Well done, ❌ Needs improvement, 🎯 Tomorrow's action plan, ⏱️ Study hours estimate. Detailed. Hindi/English mix.`;
       } else if (reportType === "weekly") {
         const allDates = Object.keys(logs).sort().slice(-7);
         const weekLogs = allDates.map(d => `${d}: ${Object.values(logs[d]).filter(Boolean).length} active slots`).join("\n") || "No data";
@@ -355,86 +220,17 @@ Max 25 lines. Hindi/English mix.`;
         weekQ.forEach(e => { if (!subStats[e.subject]) subStats[e.subject] = { w: 0, t: 0 }; subStats[e.subject].w += e.wrong; subStats[e.subject].t += e.total; });
         const qSummary = Object.entries(subStats).map(([s, { w, t }]) => `${s}: ${w}/${t} wrong`).join("\n") || "No QBank data";
         const weeklyPages = allDates.flatMap(d => readingData[d] || []).reduce((s, e) => s + e.pages, 0);
-        prompt = `NEET PG Weekly Report (last 7 days)
-ACTIVITY: ${weekLogs}
-READING (${weeklyPages}pg): ${getReadingSummaryForReport(7)}
-QBANK: ${qSummary}
-
-STRICT FORMAT — no paragraphs:
-
-📊 WEEK SCORECARD
-→ Score: [X]/10 | Avg hrs/day: [X] | Pages: ${weeklyPages} | Accuracy: [X]%
-
-📚 SUBJECT TABLE (tracked subjects only)
-Subject → Pages | QBank% | Status(✅/⚠️/🔴)
-
-🔴 FIX NEXT WEEK (top 3)
-1. [Subject→Topic] – [why, 5 words]
-2. [Subject→Topic] – [why, 5 words]
-3. [Subject→Topic] – [why, 5 words]
-
-🏆 STRONGEST THIS WEEK
-→ [Subject] – [reason]
-
-📅 NEXT WEEK FLOW
-Mon–Tue → [Subject] + [QBank target]
-Wed–Thu → [Subject] + [QBank target]
-Fri–Sat → [Subject] + [QBank target]
-Sun     → Revision + Mock
-
-⏳ NEET PG PACE
-→ Current pace se syllabus: [X months]
-→ Target: [adjustment needed?]
-
-Max 30 lines. Hindi/English mix.`;
+        prompt = `WEEKLY REPORT for MBBS student (last 7 days)\n\nACTIVITY:\n${weekLogs}\n\nREADING (Total: ${weeklyPages} pages):\n${getReadingSummaryForReport(7)}\n\nQBANK:\n${qSummary}\n\nProvide: 📈 Score /10, 📖 Reading consistency, 🔴 Top 3 weak topics, 🏆 Strong subjects, 📅 Next week plan, 🎯 MBBS completion estimate. Motivating. Hindi/English mix.`;
       } else {
         const allQ = Object.values(qbankData).flat();
         const subjectMap = {};
         allQ.forEach(e => { if (!subjectMap[e.subject]) subjectMap[e.subject] = {}; if (!subjectMap[e.subject][e.topic]) subjectMap[e.subject][e.topic] = { w: 0 }; subjectMap[e.subject][e.topic].w += e.wrong; });
         const qStats = Object.entries(subjectMap).map(([s, topics]) => `${s}:\n` + Object.entries(topics).map(([t, { w }]) => `  • ${t}: ${w} wrong`).join("\n")).join("\n\n") || "No QBank data";
         const totalPages = Object.values(readingData).flat().reduce((s, e) => s + e.pages, 0);
-        prompt = `NEET PG Monthly Report
-Days: ${Object.keys(logs).length} | Pages: ${totalPages} | Qs: ${allQ.reduce((s, e) => s + e.total, 0)}
-READING: ${getReadingSummaryForReport(null)}
-QBANK: ${qStats}
-
-STRICT FORMAT — tables/bullets only, no paragraphs:
-
-🏥 MONTHLY SCORECARD
-→ Active days: [X]/30 | Avg pages/day: [X]
-→ Overall accuracy: [X]% | NEET PG readiness: [X]/10
-
-📚 SUBJECT MASTERY
-Subject | Pages | QBank% | Status
---------|-------|--------|-------
-[row per subject]
-
-🔴 TOP 5 WEAK TOPICS
-1. [Sub→Topic] – [fix this: action]
-2. [Sub→Topic] – [fix this: action]
-3. [Sub→Topic] – [fix this: action]
-4. [Sub→Topic] – [fix this: action]
-5. [Sub→Topic] – [fix this: action]
-
-✅ TOP 3 STRONG
-1. [Subject] – [why]
-2. [Subject] – [why]
-3. [Subject] – [why]
-
-🗺️ NEXT MONTH ROADMAP
-Wk1 → [Subjects] | Daily: [X]pg + [X]Qs
-Wk2 → [Subjects] | Daily: [X]pg + [X]Qs
-Wk3 → [Subjects] | Daily: [X]pg + [X]Qs
-Wk4 → Full revision + 2 Mock tests
-
-⏳ NEET PG TIMELINE
-→ At current pace: [X months] remaining
-→ Must improve: [specific metric]
-
-Max 40 lines. Hindi/English mix.`;
+        prompt = `MONTHLY MBBS REPORT\n\nTotal days: ${Object.keys(logs).length}\nTotal pages: ${totalPages}\nTotal QBank Qs: ${allQ.reduce((s, e) => s + e.total, 0)}\n\nREADING BY SUBJECT:\n${getReadingSummaryForReport(null)}\n\nQBANK MISTAKES:\n${qStats}\n\nProvide: 📊 Overview, 📖 Reading per subject progress, 🔴 Top 5 weak topics, ✅ Strong areas, 🗺️ Revision roadmap, ⏳ 19-subject completion timeline. Very detailed. Hindi/English mix.`;
       }
       setReportOutput(await callAI(prompt));
-    } catch (e) { setReportOutput("❌ Error: " + e.message); }
+    } catch (e) { setReportOutput("Error: " + e.message); }
     setReportLoading(false);
   };
 
@@ -490,26 +286,24 @@ Max 40 lines. Hindi/English mix.`;
             {HOURS.map(h => <div key={h} style={s.hrRow}><div style={s.hrBadge(!!dayLog[h]?.trim())}>{h}</div><input style={s.inp} placeholder={`${h} – kya kiya?`} value={dayLog[h] || ""} onChange={e => updateHourLog(h, e.target.value)} /></div>)}
           </div>
         </div>
-        {/* ── Today's Goals Progress ── */}
         {getTodayGoals().length > 0 && (
-          <div style={{...s.card, background:"linear-gradient(135deg,#0a1a0a,#0d1b3e)", border:"1px solid #1a3a2a"}}>
-            <label style={s.lbl}>🎯 Aaj Ke Targets</label>
+          <div style={{...s.card,background:"linear-gradient(135deg,#0a1a0a,#0d1b3e)",border:"1px solid #1a3a2a"}}>
+            <label style={s.lbl}>Today ke Targets</label>
             {getTodayGoals().map(g => {
               const prog = getGoalProgress(g.subject, getToday());
-              const pct = prog ? prog.pct : 0;
-              const actual = prog ? prog.actual : 0;
+              const pct = prog?prog.pct:0; const actual = prog?prog.actual:0;
               return (
                 <div key={g.id} style={{marginBottom:"10px"}}>
-                  <div style={{display:"flex", justifyContent:"space-between", fontSize:"12px", marginBottom:"3px"}}>
-                    <span style={{color:"#a0d8a0", fontWeight:600}}>{g.subject}</span>
-                    <div style={{display:"flex", gap:"6px", alignItems:"center"}}>
-                      <span style={{color: pct>=100?"#4ade80":pct>=50?"#fbbf24":"#f87171", fontSize:"11px"}}>{actual}/{g.targetPages} pg</span>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",marginBottom:"3px"}}>
+                    <span style={{color:"#a0d8a0",fontWeight:600}}>{g.subject}</span>
+                    <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
+                      <span style={{color:pct>=100?"#4ade80":pct>=50?"#fbbf24":"#f87171",fontSize:"11px"}}>{actual}/{g.targetPages} pg</span>
                       <span style={s.badge(pct>=100?"green":pct>=50?"blue":"red")}>{pct}%</span>
-                      <button onClick={()=>deleteGoal(getToday(),g.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#5a2a2a",fontSize:"12px"}}>✕</button>
+                      <button onClick={()=>deleteGoal(getToday(),g.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#5a2a2a",fontSize:"12px"}}>X</button>
                     </div>
                   </div>
-                  <div style={{height:"6px", borderRadius:"3px", background:"#1e1e35", overflow:"hidden"}}>
-                    <div style={{height:"100%", width:`${pct}%`, background: pct>=100?"linear-gradient(90deg,#22c55e,#16a34a)":pct>=50?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#ef4444,#dc2626)", transition:"width 0.3s", borderRadius:"3px"}}/>
+                  <div style={{height:"6px",borderRadius:"3px",background:"#1e1e35",overflow:"hidden"}}>
+                    <div style={{height:"100%",width:pct+"%",background:pct>=100?"linear-gradient(90deg,#22c55e,#16a34a)":pct>=50?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#ef4444,#dc2626)",transition:"width 0.3s",borderRadius:"3px"}}/>
                   </div>
                 </div>
               );
@@ -517,71 +311,46 @@ Max 40 lines. Hindi/English mix.`;
           </div>
         )}
 
-        {/* ── Set Tomorrow's Target ── */}
         <div style={s.card}>
-          <label style={s.lbl}>🎯 Target Set Karo</label>
-          <div style={s.row}>
-            <div style={{flex:"0 0 80px"}}>
-              <label style={s.lbl}>Date</label>
-              <input type="date" value={goalDate} onChange={e=>setGoalDate(e.target.value)} style={s.inp}/>
-            </div>
+          <label style={s.lbl}>Target Set Karo</label>
+          <div style={{...s.row,marginBottom:"8px"}}>
+            <div style={{flex:1}}><label style={s.lbl}>Date</label><input type="date" value={goalDate} onChange={e=>setGoalDate(e.target.value)} style={s.inp}/></div>
           </div>
-          <div style={{marginBottom:"8px"}}>
-            <label style={s.lbl}>Subject</label>
-            <select value={goalSubject} onChange={e=>setGoalSubject(e.target.value)} style={s.sel}>
-              {SUBJECTS.map(sub=><option key={sub}>{sub}</option>)}
-            </select>
-          </div>
-          <div style={{marginBottom:"10px"}}>
-            <label style={s.lbl}>Page Target</label>
-            <input type="number" min="1" max="100" placeholder="e.g. 20" value={goalPages} onChange={e=>setGoalPages(e.target.value)} style={s.inp}/>
-          </div>
-          <div style={{display:"flex", gap:"8px", flexWrap:"wrap"}}>
-            <button style={s.btn("green")} onClick={saveGoal}>✅ Target Save</button>
-            <button style={s.btn("blue")} onClick={getAiGoalSuggestion} disabled={goalLoading}>
-              {goalLoading?"🔄 AI Soch Raha Hai...":"🤖 AI se Target Suggest Karwao"}
-            </button>
-          </div>
-          {aiGoalSuggestion && (
-            <div style={{...s.aiBox, marginTop:"10px"}}>
-              <div style={{fontSize:"9px",color:"#3a5a3a",marginBottom:"6px"}}>🤖 AI SUGGESTED TARGETS</div>
-              {aiGoalSuggestion}
-            </div>
-          )}
+          <div style={{marginBottom:"8px"}}><label style={s.lbl}>Subject</label><select value={goalSubject} onChange={e=>setGoalSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub=><option key={sub}>{sub}</option>)}</select></div>
+          <div style={{marginBottom:"10px"}}><label style={s.lbl}>Page Target</label><input type="number" min="1" max="100" placeholder="e.g. 20" value={goalPages} onChange={e=>setGoalPages(e.target.value)} style={s.inp}/></div>
+          <button style={s.btn("green")} onClick={saveGoal}>Save Target</button>
+          {aiGoalSuggestion && <div style={s.aiBox}>{aiGoalSuggestion}</div>}
         </div>
 
         <div style={{ textAlign: "center", marginBottom: "10px" }}>
-          <button style={{ ...s.btn("purple"), padding: "12px 28px", fontSize: "13px" }} onClick={analyseDay} disabled={aiLoading}>{aiLoading ? "🔄 Analysing..." : "🤖 AI se Aaj ka Analysis Lo"}</button>
+          <button style={{ ...s.btn("purple"), padding: "12px 28px", fontSize: "13px" }} onClick={analyseDay} disabled={aiLoading}>{aiLoading ? "Analysing..." : "AI se Aaj ka Analysis Lo"}</button>
         </div>
         {aiAnalysis && <div style={s.aiBox}><div style={{ fontSize: "9px", color: "#5a3f8a", marginBottom: "8px" }}>🤖 AI ANALYSIS • {selectedDate}</div>{aiAnalysis}</div>}
       </div>}
 
       {tab === 1 && <div style={s.page}>
         <div style={{ ...s.card, background: "linear-gradient(135deg,#0d1f0d,#0a1a2e)", border: "1px solid #1a3a1a", textAlign: "center", padding: "18px" }}>
-          <div style={{ fontSize: "11px", color: "#5a8a5a", letterSpacing: "1px", marginBottom: "4px" }}>📖 AAJKE DIN KE PAGES</div>
+          <div style={{ fontSize: "11px", color: "#5a8a5a", letterSpacing: "1px", marginBottom: "4px" }}>AAJKE DIN KE PAGES</div>
           <div style={{ fontSize: "52px", fontWeight: 700, color: "#4ade80", lineHeight: 1 }}>{todayReadPages}</div>
-          <div style={{ fontSize: "11px", color: "#3a6a3a", marginTop: "4px" }}>{todayReading.length} sessions • {rdDate}</div>
+          <div style={{ fontSize: "11px", color: "#3a6a3a", marginTop: "4px" }}>{todayReading.length} sessions - {rdDate}</div>
         </div>
 
-        {/* Reading Count Tracker */}
         <div style={s.card}>
-          <label style={s.lbl}>🔁 Subject Reading Count — Kitni Baar Padha</label>
-          <p style={{fontSize:"11px",color:"#5a6880",marginBottom:"10px",lineHeight:"1.5"}}>
-            Har subject ki 1st, 2nd, 3rd... reading track karo. + / − se update karo.
-          </p>
+          <label style={s.lbl}>Subject Reading Count - Kitni Baar Padha</label>
+          <p style={{fontSize:"11px",color:"#5a6880",marginBottom:"10px",lineHeight:"1.5"}}>Har subject ki 1st, 2nd, 3rd... reading track karo.</p>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px"}}>
             {SUBJECTS.map(subj => {
-              const count = readCounts[subj] || 0;
-              const color = count === 0 ? "#2a2a45" : count === 1 ? "#7c3aed" : count === 2 ? "#2563eb" : count === 3 ? "#059669" : "#d97706";
-              const label = count === 0 ? "Not started" : count === 1 ? "1st reading" : count === 2 ? "2nd reading" : count === 3 ? "3rd reading" : `${count}th reading`;
+              const count = readCounts[subj]||0;
+              const color = count===0?"#2a2a45":count===1?"#7c3aed":count===2?"#2563eb":count===3?"#059669":"#d97706";
+              const label = count===0?"Not started":count===1?"1st reading":count===2?"2nd reading":count===3?"3rd reading":count+"th reading";
               return (
-                <div key={subj} style={{background:"#070714",border:`1px solid ${count>0?color+"44":"#1c1c32"}`,borderRadius:"10px",padding:"10px"}}>
-                  <div style={{fontSize:"11px",fontWeight:600,color:count>0?"#e8e0f0":"#3a3a5a",marginBottom:"6px",lineHeight:"1.3"}}>{subj}</div>
+                <div key={subj} style={{background:"#070714",border:"1px solid "+(count>0?color+"55":"#1c1c32"),borderRadius:"10px",padding:"10px"}}>
+                  <div style={{fontSize:"11px",fontWeight:600,color:count>0?"#e8e0f0":"#3a3a5a",marginBottom:"4px"}}>{subj}</div>
                   <div style={{fontSize:"10px",color:count>0?color:"#2a2a45",marginBottom:"6px"}}>{label}</div>
                   <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
-                    <button onClick={()=>decrementReadCount(subj)} style={{width:"28px",height:"28px",borderRadius:"6px",border:"1px solid #2a2a45",background:"#0a0a18",color:"#f87171",cursor:"pointer",fontSize:"16px",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                    <button onClick={()=>decrementReadCount(subj)} style={{width:"28px",height:"28px",borderRadius:"6px",border:"1px solid #2a2a45",background:"#0a0a18",color:"#f87171",cursor:"pointer",fontSize:"16px"}}>-</button>
                     <div style={{flex:1,textAlign:"center",fontSize:"20px",fontWeight:700,color:count>0?color:"#2a2a45"}}>{count}</div>
-                    <button onClick={()=>incrementReadCount(subj)} style={{width:"28px",height:"28px",borderRadius:"6px",border:"1px solid #2a2a45",background:"#0a0a18",color:"#4ade80",cursor:"pointer",fontSize:"16px",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                    <button onClick={()=>incrementReadCount(subj)} style={{width:"28px",height:"28px",borderRadius:"6px",border:"1px solid #2a2a45",background:"#0a0a18",color:"#4ade80",cursor:"pointer",fontSize:"16px"}}>+</button>
                   </div>
                 </div>
               );
@@ -728,84 +497,52 @@ Max 40 lines. Hindi/English mix.`;
           }
         </div>
         <div style={s.card}>
-          <label style={s.lbl}>📚 19 Subjects – Complete Progress</label>
-
-          {/* Summary Stats */}
-          {(() => {
-            const totalPages = Object.values(readingData).flat().reduce((a,e)=>a+e.pages,0);
-            const startedSubjects = SUBJECTS.filter(sub => Object.values(readingData).flat().some(e=>e.subject===sub)).length;
-            const totalQs = Object.values(qbankData).flat().reduce((a,e)=>a+e.total,0);
+          <label style={s.lbl}>19 Subjects - Complete Progress</label>
+          {(()=>{
+            const totalPg=Object.values(readingData).flat().reduce((a,e)=>a+e.pages,0);
+            const started=SUBJECTS.filter(sub=>Object.values(readingData).flat().some(e=>e.subject===sub)).length;
+            const totalQs=Object.values(qbankData).flat().reduce((a,e)=>a+e.total,0);
             return (
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"6px",marginBottom:"12px"}}>
-                {[
-                  {l:"Total Pages",v:totalPages,c:"#4ade80"},
-                  {l:"Subjects Started",v:`${startedSubjects}/19`,c:"#a78bfa"},
-                  {l:"Total QBank",v:totalQs,c:"#60a5fa"},
-                ].map((x,i)=>(
-                  <div key={i} style={{background:"#070714",border:"1px solid #1c1c32",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
-                    <div style={{fontSize:"18px",fontWeight:700,color:x.c}}>{x.v}</div>
+                {[{l:"Total Pages",v:totalPg,col:"#4ade80"},{l:"Started",v:started+"/19",col:"#a78bfa"},{l:"QBank Qs",v:totalQs,col:"#60a5fa"}].map((x,idx)=>(
+                  <div key={idx} style={{background:"#070714",border:"1px solid #1c1c32",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
+                    <div style={{fontSize:"18px",fontWeight:700,color:x.col}}>{x.v}</div>
                     <div style={{fontSize:"9px",color:"#3a4a60",marginTop:"2px"}}>{x.l}</div>
                   </div>
                 ))}
               </div>
             );
           })()}
-
-          {/* Per Subject Detail */}
-          {SUBJECTS.map((subj, i) => {
-            const allEntries = Object.values(readingData).flat().filter(e => e.subject === subj);
-            const rp = allEntries.reduce((a,e) => a+e.pages, 0);
-            const sessions = allEntries.length;
-            const sources = [...new Set(allEntries.map(e=>e.source))];
-            const avgRating = sessions > 0 ? (allEntries.reduce((a,e)=>a+e.rating,0)/sessions).toFixed(1) : null;
-            const lastRead = allEntries.length > 0 ? allEntries.sort((a,b)=>b.date.localeCompare(a.date))[0].date : null;
-
-            const qd = Object.values(qbankData).flat().filter(e => e.subject === subj);
-            const qt = qd.reduce((a,e) => a+e.total, 0);
-            const qw = qd.reduce((a,e) => a+e.wrong, 0);
-            const acc = qt ? Math.round((1-qw/qt)*100) : null;
-
-            const maxPages = Math.max(...SUBJECTS.map(s => Object.values(readingData).flat().filter(e=>e.subject===s).reduce((a,e)=>a+e.pages,0)), 1);
-            const barPct = rp > 0 ? Math.round(rp/maxPages*100) : 0;
-
-            const status = rp === 0 && qt === 0 ? "not_started"
-              : rp > 0 && acc !== null && acc >= 70 ? "strong"
-              : rp > 0 ? "reading"
-              : "qbank_only";
-
-            const statusColor = status==="strong"?"#4ade80":status==="reading"?"#fbbf24":status==="qbank_only"?"#60a5fa":"#3a3a5a";
-            const statusLabel = status==="strong"?"✅":status==="reading"?"📖":status==="qbank_only"?"🧪":"○";
-
+          {SUBJECTS.map((subj,i)=>{
+            const allE=Object.values(readingData).flat().filter(e=>e.subject===subj);
+            const rp=allE.reduce((a,e)=>a+e.pages,0);
+            const sessions=allE.length;
+            const avgR=sessions>0?(allE.reduce((a,e)=>a+e.rating,0)/sessions).toFixed(1):null;
+            const lastRead=allE.length>0?allE.sort((a,b)=>b.date.localeCompare(a.date))[0].date:null;
+            const srcs=[...new Set(allE.map(e=>e.source))];
+            const qd=Object.values(qbankData).flat().filter(e=>e.subject===subj);
+            const qt=qd.reduce((a,e)=>a+e.total,0),qw=qd.reduce((a,e)=>a+e.wrong,0);
+            const acc=qt?Math.round((1-qw/qt)*100):null;
+            const rc=readCounts[subj]||0;
+            const rcLabel=rc===0?"":rc===1?"1st":rc===2?"2nd":rc===3?"3rd":rc+"th";
+            const maxPg=Math.max(...SUBJECTS.map(s=>Object.values(readingData).flat().filter(e=>e.subject===s).reduce((a,e)=>a+e.pages,0)),1);
             return (
               <div key={subj} style={{borderBottom:"1px solid #111124",padding:"10px 0"}}>
-                {/* Subject name + status */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
-                    <span style={{fontSize:"12px",color:statusColor}}>{statusLabel}</span>
-                    <span style={{fontSize:"12px",fontWeight:600,color:rp>0?"#c4b5fd":"#4a4a6a"}}>{i+1}. {subj}</span>
-                  </div>
-                  <div style={{display:"flex",gap:"4px",alignItems:"center"}}>
-                    {rp>0 && <span style={s.badge("green")}>{rp}pg</span>}
-                    {acc!==null && <span style={s.badge(acc>=70?"green":"red")}>{acc}%</span>}
-                    {rp===0 && qt===0 && <span style={{fontSize:"10px",color:"#2a2a45"}}>not started</span>}
+                  <span style={{fontSize:"12px",fontWeight:600,color:rp>0?"#c4b5fd":"#3a3a5a"}}>{i+1}. {subj}</span>
+                  <div style={{display:"flex",gap:"4px",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                    {rp>0&&<span style={s.badge("green")}>{rp}pg</span>}
+                    {rc>0&&<span style={{...s.badge("blue"),color:"#c4b5fd",background:"#1a0a2e",border:"1px solid #5b21b6"}}>{rcLabel} read</span>}
+                    {acc!==null?<span style={s.badge(acc>=70?"green":"red")}>{acc}%</span>:<span style={{color:"#252535",fontSize:"10px"}}>not started</span>}
                   </div>
                 </div>
-
-                {/* Progress bar */}
-                {rp > 0 && (
-                  <div style={{height:"4px",borderRadius:"2px",background:"#1e1e35",marginBottom:"4px",overflow:"hidden"}}>
-                    <div style={{height:"100%",width:`${barPct}%`,background:"linear-gradient(90deg,#7c3aed,#4ade80)",borderRadius:"2px"}}/>
-                  </div>
-                )}
-
-                {/* Detail row */}
-                {rp > 0 && (
+                {rp>0&&<div style={{height:"4px",borderRadius:"2px",background:"#1e1e35",marginBottom:"4px",overflow:"hidden"}}><div style={{height:"100%",width:Math.round(rp/maxPg*100)+"%",background:"linear-gradient(90deg,#7c3aed,#4ade80)",borderRadius:"2px"}}/></div>}
+                {rp>0&&(
                   <div style={{display:"flex",gap:"8px",flexWrap:"wrap",fontSize:"10px",color:"#4a5a70"}}>
-                    {sessions > 0 && <span>📖 {sessions} sessions</span>}
-                    {readCounts[subj] > 0 && <span style={{color:"#a78bfa",fontWeight:600}}>🔁 {readCounts[subj] === 1 ? "1st" : readCounts[subj] === 2 ? "2nd" : readCounts[subj] === 3 ? "3rd" : readCounts[subj]+"th"} reading</span>}
-                    {avgRating && <span>⭐ {avgRating}/5</span>}
-                    {sources.length > 0 && <span>📄 {sources.join(", ")}</span>}
-                    {lastRead && <span>🗓 Last: {lastRead}</span>}
+                    {sessions>0&&<span>{sessions} sessions</span>}
+                    {avgR&&<span>avg {avgR}/5</span>}
+                    {srcs.length>0&&<span>{srcs.join(", ")}</span>}
+                    {lastRead&&<span>Last: {lastRead}</span>}
                   </div>
                 )}
               </div>
@@ -813,24 +550,20 @@ Max 40 lines. Hindi/English mix.`;
           })}
         </div>
         <div style={s.card}>
-          <label style={s.lbl}>💾 Backup & Restore</label>
-          <p style={{fontSize:"11px", color:"#5a8a5a", marginBottom:"10px", lineHeight:"1.6", background:"#0a1a0a", padding:"8px", borderRadius:"6px", border:"1px solid #1a3a1a"}}>
-            ⚠️ Data sirf is browser mein hai — weekly backup lo!
+          <label style={s.lbl}>Backup and Restore</label>
+          <p style={{fontSize:"11px",color:"#5a8a5a",marginBottom:"10px",lineHeight:"1.6",background:"#0a1a0a",padding:"8px",borderRadius:"6px",border:"1px solid #1a3a1a"}}>
+            Data sirf is browser mein hai. Weekly backup lo!
           </p>
-          <div style={{display:"flex", gap:"8px", flexWrap:"wrap", marginBottom:"12px"}}>
-            <button style={{...s.btn("green"), fontSize:"13px", padding:"11px 18px"}} onClick={exportData}>
-              📥 Export Backup (.json)
-            </button>
-            <button style={{...s.btn("blue"), fontSize:"13px", padding:"11px 18px"}} onClick={() => importRef.current.click()}>
-              📤 Import Backup
-            </button>
+          <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"12px"}}>
+            <button style={{...s.btn("green"),padding:"11px 18px"}} onClick={exportData}>Export Backup (.json)</button>
+            <button style={{...s.btn("blue"),padding:"11px 18px"}} onClick={()=>importRef.current.click()}>Import Backup</button>
             <input type="file" ref={importRef} accept=".json" style={{display:"none"}} onChange={importData}/>
           </div>
-          <label style={{...s.lbl, marginTop:"8px"}}>🗑️ Delete Data</label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            <button style={s.btn("red")} onClick={() => { if (window.confirm("Daily logs delete?")) { setLogs({}); localStorage.removeItem("daily_logs"); } }}>🗑️ Daily</button>
-            <button style={s.btn("red")} onClick={() => { if (window.confirm("Reading data delete?")) { setReadingData({}); localStorage.removeItem("reading_data"); } }}>🗑️ Reading</button>
-            <button style={s.btn("red")} onClick={() => { if (window.confirm("QBank data delete?")) { setQbankData({}); localStorage.removeItem("qbank_data"); } }}>🗑️ QBank</button>
+          <label style={s.lbl}>Delete Data</label>
+          <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+            <button style={s.btn("red")} onClick={()=>{if(window.confirm("Daily logs delete?")){setLogs({});localStorage.removeItem("daily_logs");}}}>Daily</button>
+            <button style={s.btn("red")} onClick={()=>{if(window.confirm("Reading data delete?")){setReadingData({});localStorage.removeItem("reading_data");}}}>Reading</button>
+            <button style={s.btn("red")} onClick={()=>{if(window.confirm("QBank delete?")){setQbankData({});localStorage.removeItem("qbank_data");}}}>QBank</button>
           </div>
         </div>
         <div style={{ ...s.card, textAlign: "center" }}>
