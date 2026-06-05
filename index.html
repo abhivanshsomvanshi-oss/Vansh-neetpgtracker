@@ -34,9 +34,10 @@ function App() {
   const [rdDate, setRdDate] = useState(getToday());
   const [rdSubject, setRdSubject] = useState(SUBJECTS[0]);
   const [rdPages, setRdPages] = useState("");
+  const [rdFromPage, setRdFromPage] = useState("");
+  const [rdToPage, setRdToPage] = useState("");
   const [rdVideoHours, setRdVideoHours] = useState("");
   const [rdFlashcards, setRdFlashcards] = useState("");
-  const [rdRating, setRdRating] = useState("3");
   const [qbankData, setQbankData] = useState(() => { try { return JSON.parse(localStorage.getItem("qbank_data") || "{}"); } catch { return {}; } });
   const [qbankDate, setQbankDate] = useState(getToday());
   const [qbankSubject, setQbankSubject] = useState(SUBJECTS[0]);
@@ -51,6 +52,7 @@ function App() {
   const [goals, setGoals] = useState(() => { try { return JSON.parse(localStorage.getItem("daily_goals") || "{}"); } catch { return {}; } });
   const [goalSubject, setGoalSubject] = useState(SUBJECTS[0]);
   const [goalPages, setGoalPages] = useState("");
+  const [goalVideoHours, setGoalVideoHours] = useState("");
   const [goalDate, setGoalDate] = useState(getToday());
   const [aiGoalSuggestion, setAiGoalSuggestion] = useState("");
   const [goalLoading, setGoalLoading] = useState(false);
@@ -93,18 +95,28 @@ function App() {
   };
 
   const saveGoal = () => {
-    if(!goalPages||+goalPages<1){alert("Pages target bharo!");return;}
+    if(!goalPages&&!goalVideoHours){alert("Pages ya Video Hours target toh bharo!");return;}
+    if(goalPages&&+goalPages<0){alert("Pages target sahi bharo!");return;}
+    if(goalVideoHours&&+goalVideoHours<0){alert("Video Hours target sahi bharo!");return;}
     const existing=(goals[goalDate]||[]).filter(g=>g.subject!==goalSubject);
-    existing.push({subject:goalSubject,targetPages:+goalPages,date:goalDate,id:Date.now()});
+    existing.push({subject:goalSubject,targetPages:goalPages?+goalPages:0,targetVideoHours:goalVideoHours?+goalVideoHours:0,date:goalDate,id:Date.now()});
     setGoals(prev=>({...prev,[goalDate]:existing}));
     setGoalPages("");
+    setGoalVideoHours("");
   };
   const deleteGoal = (date,id) => setGoals(prev=>({...prev,[date]:(prev[date]||[]).filter(g=>g.id!==id)}));
   const getTodayGoals = () => goals[getToday()]||[];
   const getGoalProgress = (subject,date) => {
     const target=(goals[date]||[]).find(g=>g.subject===subject);
-    const actual=(readingData[date]||[]).filter(e=>e.subject===subject).reduce((s,e)=>s+e.pages,0);
-    return target?{target:target.targetPages,actual,pct:Math.min(100,Math.round(actual/target.targetPages*100))}:null;
+    if(!target) return null;
+    const actualPages=(readingData[date]||[]).filter(e=>e.subject===subject).reduce((s,e)=>s+(e.pages||0),0);
+    const actualVideo=(readingData[date]||[]).filter(e=>e.subject===subject).reduce((s,e)=>s+(e.videoHours||0),0);
+    const hasPages=target.targetPages>0;
+    const hasVideo=target.targetVideoHours>0;
+    const pgPct=hasPages?Math.min(100,Math.round(actualPages/target.targetPages*100)):100;
+    const vidPct=hasVideo?Math.min(100,Math.round(actualVideo/target.targetVideoHours*100)):100;
+    const overallPct=hasPages&&hasVideo?Math.round((pgPct+vidPct)/2):hasPages?pgPct:vidPct;
+    return {target:target.targetPages,actualPages,pct:overallPct,pgPct,vidPct,actualVideo,targetVideoHours:target.targetVideoHours||0,hasPages,hasVideo};
   };
   const incrementReadCount = (subject) => setReadCounts(prev=>({...prev,[subject]:(prev[subject]||0)+1}));
   const decrementReadCount = (subject) => setReadCounts(prev=>({...prev,[subject]:Math.max(0,(prev[subject]||0)-1)}));
@@ -133,9 +145,9 @@ function App() {
 
   const addReadingEntry = () => {
     if (!rdPages && !rdVideoHours) { alert("Pages ya Video Hours mein se kuch toh bharo!"); return; }
-    const entry = { id: Date.now(), date: rdDate, subject: rdSubject, pages: rdPages?+rdPages:0, videoHours: rdVideoHours?+rdVideoHours:0, flashcards: rdFlashcards?+rdFlashcards:0, rating: +rdRating };
+    const entry = { id: Date.now(), date: rdDate, subject: rdSubject, pages: rdPages?+rdPages:0, fromPage: rdFromPage?+rdFromPage:null, toPage: rdToPage?+rdToPage:null, videoHours: rdVideoHours?+rdVideoHours:0, flashcards: rdFlashcards?+rdFlashcards:0 };
     setReadingData(prev => ({ ...prev, [rdDate]: [...(prev[rdDate] || []), entry] }));
-    setRdPages(""); setRdVideoHours(""); setRdFlashcards(""); setRdRating("3");
+    setRdPages(""); setRdFromPage(""); setRdToPage(""); setRdVideoHours(""); setRdFlashcards("");
   };
   const deleteReadingEntry = (date, id) => setReadingData(prev => ({ ...prev, [date]: (prev[date] || []).filter(e => e.id !== id) }));
 
@@ -176,7 +188,10 @@ function App() {
       const readToday = (readingData[selectedDate] || []).map(e => `${e.subject}/${e.topic}: ${e.pages}pg (${e.source})`).join("\n") || "No reading logged";
       const todayGoalsText = (goals[selectedDate]||[]).map(g=>{
         const prog=getGoalProgress(g.subject,selectedDate);
-        return g.subject+": target "+g.targetPages+"pg → actual "+(prog?prog.actual:0)+"pg ("+(prog?prog.pct:0)+"%)";
+        let status=g.subject+": ";
+        if(g.targetPages>0) status+="pages target "+g.targetPages+"pg → actual "+(prog?prog.actualPages:0)+"pg ("+(prog?prog.pgPct:0)+"%) ";
+        if(g.targetVideoHours>0) status+="video target "+g.targetVideoHours+"hr → actual "+(prog?prog.actualVideo:0)+"hr ("+(prog?prog.vidPct:0)+"%)";
+        return status;
       }).join(", ")||"No targets set";
       const todayVid = (readingData[selectedDate]||[]).reduce((a,e)=>a+(e.videoHours||0),0);
       const todayFC = (readingData[selectedDate]||[]).reduce((a,e)=>a+(e.flashcards||0),0);
@@ -184,6 +199,7 @@ function App() {
 HOURLY LOG: ${logText}
 READING: ${readToday} | Video: ${todayVid}hrs | Flashcards: ${todayFC}
 TARGETS: ${todayGoalsText}
+IMPORTANT INSTRUCTION: Kal ke targets mein KABHI bhi subah jaldi uthne ya 5am/6am wala suggestion MAT dena. Student raat ko late tak padhta hai – suggestions RAAT ke time slots (10pm–2am) mein study badhane ke dena.
 Reply ONLY in this format - NO paragraphs:
 TIME AUDIT: Productive [X]hrs | Wasted [X]hrs
 Wasted: [slot]→[reason 4 words], [slot]→[reason]
@@ -313,18 +329,24 @@ Max 20 lines. Hindi/English mix.`;
             <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px"}}>
               {(goals[selectedDate]||[]).map(g => {
                 const prog = getGoalProgress(g.subject, selectedDate);
-                const pct = prog?prog.pct:0; const actual = prog?prog.actual:0;
+                const pct = prog?prog.pct:0;
                 const achieved = pct >= 100;
                 return (
                   <div key={g.id} style={{background: achieved?"#0a2a0a":"#070714", border:"1px solid "+(achieved?"#22c55e":"#252540"), borderRadius:"8px", padding:"8px"}}>
-                    <div style={{fontSize:"11px",fontWeight:600,color:achieved?"#4ade80":"#c4b5fd",marginBottom:"2px"}}>{g.subject}</div>
+                    <div style={{fontSize:"11px",fontWeight:600,color:achieved?"#4ade80":"#c4b5fd",marginBottom:"3px"}}>{g.subject}</div>
                     {achieved
-                      ? <div style={{fontSize:"10px",color:"#4ade80",fontWeight:700}}>ACHIEVED!</div>
-                      : <div style={{fontSize:"10px",color:"#f87171"}}>{actual}/{g.targetPages} pg</div>
+                      ? <div style={{fontSize:"10px",color:"#4ade80",fontWeight:700}}>✅ ACHIEVED!</div>
+                      : <div>
+                          {prog&&prog.hasPages&&<div style={{fontSize:"10px",color:"#f87171"}}>📖 {prog.actualPages}/{g.targetPages} pg</div>}
+                          {prog&&prog.hasVideo&&<div style={{fontSize:"10px",color:"#60a5fa"}}>🎬 {prog.actualVideo}/{g.targetVideoHours} hr</div>}
+                        </div>
                     }
-                    <div style={{height:"3px",borderRadius:"2px",background:"#1e1e35",marginTop:"4px",overflow:"hidden"}}>
-                      <div style={{height:"100%",width:pct+"%",background:achieved?"#22c55e":"linear-gradient(90deg,#7c3aed,#60a5fa)",borderRadius:"2px"}}/>
-                    </div>
+                    {prog&&prog.hasPages&&<div style={{height:"3px",borderRadius:"2px",background:"#1e1e35",marginTop:"4px",overflow:"hidden"}}>
+                      <div style={{height:"100%",width:prog.pgPct+"%",background:prog.pgPct>=100?"#22c55e":"linear-gradient(90deg,#7c3aed,#60a5fa)",borderRadius:"2px"}}/>
+                    </div>}
+                    {prog&&prog.hasVideo&&<div style={{height:"3px",borderRadius:"2px",background:"#1e1e35",marginTop:"3px",overflow:"hidden"}}>
+                      <div style={{height:"100%",width:prog.vidPct+"%",background:prog.vidPct>=100?"#22c55e":"linear-gradient(90deg,#2563eb,#06b6d4)",borderRadius:"2px"}}/>
+                    </div>}
                   </div>
                 );
               })}
@@ -342,20 +364,39 @@ Max 20 lines. Hindi/English mix.`;
             <label style={s.lbl}>Today ke Targets</label>
             {getTodayGoals().map(g => {
               const prog = getGoalProgress(g.subject, getToday());
-              const pct = prog?prog.pct:0; const actual = prog?prog.actual:0;
+              const pct = prog?prog.pct:0;
               return (
                 <div key={g.id} style={{marginBottom:"10px"}}>
                   <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",marginBottom:"3px"}}>
                     <span style={{color:"#a0d8a0",fontWeight:600}}>{g.subject}</span>
                     <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
-                      <span style={{color:pct>=100?"#4ade80":pct>=50?"#fbbf24":"#f87171",fontSize:"11px"}}>{actual}/{g.targetPages} pg</span>
-                      <span style={s.badge(pct>=100?"green":pct>=50?"blue":"red")}>{pct}%</span>
+                      <span style={{color:pct>=100?"#4ade80":pct>=50?"#fbbf24":"#f87171",fontSize:"11px"}}>{pct}%</span>
+                      <span style={s.badge(pct>=100?"green":pct>=50?"blue":"red")}>{pct>=100?"✓":"pending"}</span>
                       <button onClick={()=>deleteGoal(getToday(),g.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#5a2a2a",fontSize:"12px"}}>X</button>
                     </div>
                   </div>
-                  <div style={{height:"6px",borderRadius:"3px",background:"#1e1e35",overflow:"hidden"}}>
-                    <div style={{height:"100%",width:pct+"%",background:pct>=100?"linear-gradient(90deg,#22c55e,#16a34a)":pct>=50?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#ef4444,#dc2626)",transition:"width 0.3s",borderRadius:"3px"}}/>
-                  </div>
+                  {prog&&prog.hasPages&&(
+                    <div style={{marginBottom:"3px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:"#4a5a70",marginBottom:"2px"}}>
+                        <span>📖 Pages</span>
+                        <span style={{color:prog.pgPct>=100?"#4ade80":prog.pgPct>=50?"#fbbf24":"#f87171"}}>{prog.actualPages}/{g.targetPages} pg</span>
+                      </div>
+                      <div style={{height:"5px",borderRadius:"3px",background:"#1e1e35",overflow:"hidden"}}>
+                        <div style={{height:"100%",width:prog.pgPct+"%",background:prog.pgPct>=100?"linear-gradient(90deg,#22c55e,#16a34a)":prog.pgPct>=50?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#ef4444,#dc2626)",transition:"width 0.3s",borderRadius:"3px"}}/>
+                      </div>
+                    </div>
+                  )}
+                  {prog&&prog.hasVideo&&(
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:"#4a5a70",marginBottom:"2px"}}>
+                        <span>🎬 Video</span>
+                        <span style={{color:prog.vidPct>=100?"#4ade80":prog.vidPct>=50?"#60a5fa":"#f87171"}}>{prog.actualVideo}/{g.targetVideoHours} hrs</span>
+                      </div>
+                      <div style={{height:"5px",borderRadius:"3px",background:"#1e1e35",overflow:"hidden"}}>
+                        <div style={{height:"100%",width:prog.vidPct+"%",background:prog.vidPct>=100?"linear-gradient(90deg,#22c55e,#16a34a)":prog.vidPct>=50?"linear-gradient(90deg,#2563eb,#0891b2)":"linear-gradient(90deg,#7c3aed,#4f46e5)",transition:"width 0.3s",borderRadius:"3px"}}/>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -368,7 +409,10 @@ Max 20 lines. Hindi/English mix.`;
             <div style={{flex:1}}><label style={s.lbl}>Date</label><input type="date" value={goalDate} onChange={e=>setGoalDate(e.target.value)} style={s.inp}/></div>
           </div>
           <div style={{marginBottom:"8px"}}><label style={s.lbl}>Subject</label><select value={goalSubject} onChange={e=>setGoalSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub=><option key={sub}>{sub}</option>)}</select></div>
-          <div style={{marginBottom:"10px"}}><label style={s.lbl}>Page Target</label><input type="number" min="1" max="100" placeholder="e.g. 20" value={goalPages} onChange={e=>setGoalPages(e.target.value)} style={s.inp}/></div>
+          <div style={s.row}>
+            <div style={{flex:1}}><label style={s.lbl}>📖 Page Target</label><input type="number" min="0" max="200" placeholder="e.g. 20" value={goalPages} onChange={e=>setGoalPages(e.target.value)} style={s.inp}/></div>
+            <div style={{flex:1}}><label style={s.lbl}>🎬 Video Target (hrs)</label><input type="number" min="0" step="0.5" placeholder="e.g. 2" value={goalVideoHours} onChange={e=>setGoalVideoHours(e.target.value)} style={s.inp}/></div>
+          </div>
           <button style={s.btn("green")} onClick={saveGoal}>Save Target</button>
           {aiGoalSuggestion && <div style={s.aiBox}>{aiGoalSuggestion}</div>}
         </div>
@@ -426,15 +470,12 @@ Max 20 lines. Hindi/English mix.`;
           <div style={{marginBottom:"8px"}}><label style={s.lbl}>Subject</label><select value={rdSubject} onChange={e=>setRdSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub=><option key={sub}>{sub}</option>)}</select></div>
           <div style={s.row}>
             <div style={{flex:1}}><label style={s.lbl}>Pages Read</label><input type="number" min="0" placeholder="20" value={rdPages} onChange={e=>setRdPages(e.target.value)} style={s.inp}/></div>
+            <div style={{flex:1}}><label style={s.lbl}>From Page</label><input type="number" min="0" placeholder="45" value={rdFromPage} onChange={e=>setRdFromPage(e.target.value)} style={s.inp}/></div>
+            <div style={{flex:1}}><label style={s.lbl}>To Page</label><input type="number" min="0" placeholder="65" value={rdToPage} onChange={e=>setRdToPage(e.target.value)} style={s.inp}/></div>
+          </div>
+          <div style={s.row}>
             <div style={{flex:1}}><label style={s.lbl}>Video Hours</label><input type="number" min="0" step="0.5" placeholder="1.5" value={rdVideoHours} onChange={e=>setRdVideoHours(e.target.value)} style={s.inp}/></div>
             <div style={{flex:1}}><label style={s.lbl}>Flashcards</label><input type="number" min="0" placeholder="30" value={rdFlashcards} onChange={e=>setRdFlashcards(e.target.value)} style={s.inp}/></div>
-          </div>
-          <div style={{marginBottom:"10px"}}>
-            <label style={s.lbl}>Clarity (1-5)</label>
-            <div style={{display:"flex",gap:"4px",marginTop:"4px"}}>
-              {[1,2,3,4,5].map(n=><button key={n} onClick={()=>setRdRating(String(n))} style={{background:"none",border:"none",cursor:"pointer",fontSize:"20px",opacity:n<=+rdRating?1:0.25}}>{"★"}</button>)}
-              <span style={{fontSize:"11px",color:"#5a6880",alignSelf:"center",marginLeft:"4px"}}>({rdRating}/5)</span>
-            </div>
           </div>
           <button style={s.btn("green")} onClick={addReadingEntry}>Session Save Karo</button>
         </div>
@@ -450,7 +491,7 @@ Max 20 lines. Hindi/English mix.`;
                 <button onClick={() => deleteReadingEntry(rdDate, e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#5a2a2a", fontSize: "14px" }}>X</button>
               </div>
             </div>
-            <div style={{ fontSize: "11px", color: "#4a5a40", marginTop: "3px" }}>{"★".repeat(e.rating)}{"☆".repeat(5 - e.rating)}</div>
+            {(e.fromPage && e.toPage) && <div style={{fontSize:"11px",color:"#4a5a70",marginTop:"3px"}}>p.{e.fromPage} – p.{e.toPage}</div>}
           </div>)}
         </div>}
         {rdStats.totalPages > 0 && <div style={s.card}>
