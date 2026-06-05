@@ -319,6 +319,8 @@ Max 35 lines. Hindi/English mix. Be direct aur honest.`;
     } catch(e) { setFullAnalysis("Error: " + e.message); }
     setFullLoading(false);
   };
+
+  const addQBankEntry = () => {
     if (!qbankTopic.trim() || !qTotal || qWrong === "") { alert("Topic, Total aur Wrong fields bharo!"); return; }
     const entry = { date: qbankDate, subject: qbankSubject, topic: qbankTopic.trim(), total: +qTotal, wrong: +qWrong, notes: qNotes.trim(), id: Date.now() };
     setQbankData(prev => ({ ...prev, [qbankDate]: [...(prev[qbankDate] || []), entry] }));
