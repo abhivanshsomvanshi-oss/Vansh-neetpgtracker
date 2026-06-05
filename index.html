@@ -123,7 +123,7 @@ function App() {
   const updateHourLog = (hour, val) => setLogs(prev => ({ ...prev, [selectedDate]: { ...(prev[selectedDate] || {}), [hour]: val } }));
   const getDayLogs = (date) => logs[date] || {};
 
-  const callAI = async (prompt, images = []) => {
+  const callAI = async (prompt, images = [], maxOut = 1000) => {
     const key = localStorage.getItem("gemini_key") || "";
     if (!key) throw new Error("Gemini API Key nahi hai! Settings tab > API Key field mein daalo. Free: aistudio.google.com/apikey");
     const parts = [];
@@ -136,7 +136,7 @@ function App() {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
       { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts }] }) }
+        body: JSON.stringify({ contents: [{ parts }], generationConfig: { maxOutputTokens: maxOut } }) }
     );
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
@@ -218,7 +218,107 @@ Max 20 lines. Hindi/English mix.`;
     setAiLoading(false);
   };
 
-  const addQBankEntry = () => {
+  const [fullAnalysis, setFullAnalysis] = useState("");
+  const [fullLoading, setFullLoading] = useState(false);
+
+  const analyseFullDay = async () => {
+    const date = selectedDate;
+    const dayLog = logs[date] || {};
+    const filled = Object.entries(dayLog).filter(([,v]) => v?.trim());
+    const readEntries = readingData[date] || [];
+    const qEntries = qbankData[date] || [];
+    if (!filled.length && !readEntries.length && !qEntries.length) {
+      alert("Kuch bhi log nahi hai aaj ka!"); return;
+    }
+    setFullLoading(true); setFullAnalysis("");
+    try {
+      const logText = filled.length ? filled.map(([h,v])=>`${h} – ${v}`).join("\n") : "No hourly log";
+      const readText = readEntries.length
+        ? readEntries.map(e=>`${e.subject}/${e.topic}: ${e.pages||0}pg, ${e.videoHours||0}hr video, ${e.flashcards||0}FC (${e.source})`).join("\n")
+        : "No reading logged";
+      const totalPages = readEntries.reduce((a,e)=>a+(e.pages||0),0);
+      const totalVid = readEntries.reduce((a,e)=>a+(e.videoHours||0),0);
+      const totalFC = readEntries.reduce((a,e)=>a+(e.flashcards||0),0);
+      const qText = qEntries.length
+        ? qEntries.map(e=>`${e.subject} – ${e.topic}: ${e.wrong}/${e.total} wrong (${e.total>0?Math.round(e.wrong/e.total*100):0}% error)`).join("\n")
+        : "No QBank done";
+      const totalQ = qEntries.reduce((a,e)=>a+e.total,0);
+      const totalW = qEntries.reduce((a,e)=>a+e.wrong,0);
+      const goalText = (goals[date]||[]).map(g=>{
+        const prog=getGoalProgress(g.subject,date);
+        let s=g.subject+": ";
+        if(g.targetPages>0) s+=`pages ${prog?prog.actualPages:0}/${g.targetPages}pg (${prog?prog.pgPct:0}%) `;
+        if(g.targetVideoHours>0) s+=`video ${prog?prog.actualVideo:0}/${g.targetVideoHours}hr (${prog?prog.vidPct:0}%)`;
+        return s;
+      }).join("\n") || "No targets set";
+
+      const prompt = `Tu ek NEET PG coach hai. Student ka POORA din analyze kar aur ek comprehensive report de.
+
+DATE: ${date}
+
+━━ HOURLY SCHEDULE ━━
+${logText}
+
+━━ READING/VIDEO LOG ━━
+${readText}
+TOTAL: ${totalPages}pg | ${totalVid}hr video | ${totalFC} flashcards
+
+━━ QBANK PERFORMANCE ━━
+${qText}
+TOTAL: ${totalQ} Qs attempted, ${totalW} wrong (${totalQ>0?Math.round(totalW/totalQ*100):0}% error rate)
+
+━━ TARGETS vs ACTUAL ━━
+${goalText}
+
+IMPORTANT: Suggestions mein KABHI bhi subah jaldi uthne (5am/6am) ka mat bolna. Raat ke time slots (10pm–2am) mein study badhane ka bol.
+
+Ye exact format mein reply de – NO extra paragraphs:
+
+━━━ FULL DAY REPORT: ${date} ━━━
+
+⏱ TIME AUDIT
+Productive: [X]hrs | Wasted: [X]hrs
+Wasted slots: [list with reason]
+
+📖 READING SUMMARY
+Pages: [X] | Video: [X]hr | FC: [X]
+Best subject today: [subject]
+Weakest effort: [subject]
+
+🎯 TARGET ACHIEVEMENT
+[For each target: subject → pages%/video% → met/missed]
+Overall: [X/Y targets achieved]
+
+🧠 QBANK ANALYSIS
+Accuracy: [X]% | Strong: [subjects] | Weak: [subjects]
+Top mistake pattern: [1 line]
+
+📊 OVERALL EFFICIENCY: [X]/10
+
+✅ TOP 3 WINS TODAY:
+1. 
+2. 
+3. 
+
+❌ TOP 3 PROBLEMS:
+1. 
+2. 
+3. 
+
+🚀 KAL KA PLAN (Night-focused):
+- [Subject]: [X] pages + [X] video hrs
+- [Subject]: [X] pages + [X] video hrs
+- QBank: [Subject] [X] Qs
+- Revision: [Subject]
+
+💡 NEET PG TIP: [1 high-yield specific tip]
+
+Max 35 lines. Hindi/English mix. Be direct aur honest.`;
+
+      setFullAnalysis(await callAI(prompt, [], 2000));
+    } catch(e) { setFullAnalysis("Error: " + e.message); }
+    setFullLoading(false);
+  };
     if (!qbankTopic.trim() || !qTotal || qWrong === "") { alert("Topic, Total aur Wrong fields bharo!"); return; }
     const entry = { date: qbankDate, subject: qbankSubject, topic: qbankTopic.trim(), total: +qTotal, wrong: +qWrong, notes: qNotes.trim(), id: Date.now() };
     setQbankData(prev => ({ ...prev, [qbankDate]: [...(prev[qbankDate] || []), entry] }));
@@ -421,6 +521,19 @@ Max 20 lines. Hindi/English mix.`;
           <button style={{ ...s.btn("purple"), padding: "12px 28px", fontSize: "13px" }} onClick={analyseDay} disabled={aiLoading}>{aiLoading ? "Analysing..." : "AI se Aaj ka Analysis Lo"}</button>
         </div>
         {aiAnalysis && <div style={s.aiBox}><div style={{ fontSize: "9px", color: "#5a3f8a", marginBottom: "8px" }}>🤖 AI ANALYSIS • {selectedDate}</div>{aiAnalysis}</div>}
+
+        <div style={{ textAlign: "center", marginBottom: "10px", marginTop: "6px" }}>
+          <button style={{ ...s.btn("green"), padding: "14px 28px", fontSize: "14px", fontWeight: 700, letterSpacing: "0.5px" }} onClick={analyseFullDay} disabled={fullLoading}>
+            {fullLoading ? "⏳ Full Report Ban Raha Hai..." : "🔥 POORA DIN KA FULL REPORT"}
+          </button>
+          <div style={{fontSize:"10px",color:"#3a5a3a",marginTop:"4px"}}>Daily Log + Reading + QBank — sab ek saath</div>
+        </div>
+        {fullAnalysis && (
+          <div style={{...s.aiBox, border:"1px solid #1a3a1a", background:"linear-gradient(135deg,#050f05,#05050f)"}}>
+            <div style={{ fontSize: "9px", color: "#3a8a3a", marginBottom: "8px", letterSpacing:"1px" }}>📋 FULL DAY REPORT • {selectedDate}</div>
+            <div style={{whiteSpace:"pre-wrap"}}>{fullAnalysis}</div>
+          </div>
+        )}
       </div>}
 
       {tab === 1 && <div style={s.page}>
