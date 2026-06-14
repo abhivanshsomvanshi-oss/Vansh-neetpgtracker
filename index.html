@@ -110,6 +110,7 @@ function App(){
   const [lastHourPrompted,setLastHourPrompted]=useState(()=>parseInt(localStorage.getItem("last_hour_prompted")||"-1"));
   const [midnightPopupShown,setMidnightPopupShown]=useState(()=>localStorage.getItem("midnight_popup_shown")===getToday());
   const [showCheatConfirm,setShowCheatConfirm]=useState(false);
+  const [cheatSuggestionDismissed,setCheatSuggestionDismissed]=useState(false);
 
   // Chat
   const [chatMessages,setChatMessages]=useState([]);
@@ -238,16 +239,14 @@ function App(){
   // Can suggest cheat day?
   const canSuggestCheat=(date)=>{
     if(cheatDays[date]) return false;
-    // Max 1 cheat day per week (Mon–Sun)
     if(cheatDaysThisWeek()>=1) return false;
     const wd=new Date(date).getDay();
-    const isSunday=(wd===0);
-    // Weekly majority: check if ≥80% avg across all days this week that have targets
-    const weekDaysWithTargets=getWeekDaysWithTargets(date);
-    const weekMajority=weekDaysWithTargets.length>=3&&weekDaysWithTargets.filter(d=>getDayOverallPct(d)>=80).length>=Math.ceil(weekDaysWithTargets.length*0.6);
-    if(isSunday) return true;
-    if(weekMajority) return true;
-    return false;
+    if(wd!==0) return false; // Sirf Sunday
+    // Weekly avg: all days with targets set, avg overall% ≥ 85
+    const weekDays=getWeekDaysWithTargets(date);
+    if(weekDays.length===0) return false;
+    const avgPct=Math.round(weekDays.reduce((a,d)=>a+(getDayOverallPct(d)||0),0)/weekDays.length);
+    return avgPct>=85;
   };
   // Get days this week (Mon–today) that have targets set
   const getWeekDaysThisWeek=(date)=>{
@@ -260,14 +259,9 @@ function App(){
   };
   const getWeekDaysWithTargets=(date)=>getWeekDaysThisWeek(date).filter(d=>(goals[d]||[]).length>0);
   const getCheatSuggestionReason=(date)=>{
-    const wd=new Date(date).getDay();
-    const isSunday=(wd===0);
     const weekDays=getWeekDaysWithTargets(date);
-    const achieved=weekDays.filter(d=>getDayOverallPct(d)>=80).length;
-    if(isSunday&&weekDays.length>0) return `🌅 Sunday hai! Hafte mein ${achieved}/${weekDays.length} din 80%+ targets mile — deserved rest!`;
-    if(isSunday) return `🌅 Sunday hai — weekly rest day!`;
-    if(weekDays.length>=3) return `🎯 Is hafte ${achieved}/${weekDays.length} din ke targets mostly achieve ho gaye! Cheat day earned.`;
-    return "Cheat day eligible!";
+    const avgPct=weekDays.length>0?Math.round(weekDays.reduce((a,d)=>a+(getDayOverallPct(d)||0),0)/weekDays.length):0;
+    return `🌅 Sunday + Weekly avg ${avgPct}% ≥ 85% — Cheat day deserved! 🎉`;
   };
   // Count cheat days this week (Mon–Sun)
   const cheatDaysThisWeek=()=>{
@@ -565,10 +559,9 @@ Max 40 lines. Direct. Hinglish.`;
             <div className="notif-body">
               <div style={{marginBottom:"8px"}}>{getCheatSuggestionReason(selectedDate)}</div>
               <div style={{fontSize:"11px",color:"#7a6a50",background:"#0a0800",borderRadius:"6px",padding:"8px",lineHeight:"1.7",marginBottom:"8px"}}>
-                ✅ Hourly pop-ups band<br/>
-                ✅ Targets pressure-free<br/>
+                ✅ Sunday hai ✓<br/>
+                ✅ Weekly avg 85%+ targets ✓<br/>
                 ✅ Is hafte: {cheatDaysThisWeek()}/1 cheat day used<br/>
-                ⚠️ Max 1 cheat day/week allowed
               </div>
               Kal fresh start! 💪
             </div>
@@ -589,7 +582,7 @@ Max 40 lines. Direct. Hinglish.`;
 
         <div style={s.card}>
           <label style={s.lbl}>Date</label>
-          <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} style={s.inp}/>
+          <input type="date" value={selectedDate} onChange={e=>{setSelectedDate(e.target.value);setCheatSuggestionDismissed(false);}} style={s.inp}/>
         </div>
 
         {/* Cheat Day Banner */}
@@ -603,14 +596,17 @@ Max 40 lines. Direct. Hinglish.`;
         )}
 
         {/* Cheat day suggestion */}
-        {!isCheatDay&&canSuggestCheat(selectedDate)&&(
+        {!isCheatDay&&canSuggestCheat(selectedDate)&&!cheatSuggestionDismissed&&(
           <div style={{...s.card,background:"linear-gradient(135deg,#1a0d00,#0d0800)",border:"1px solid #7c3d00",padding:"12px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"8px"}}>
               <div style={{fontSize:"13px",color:"#fb923c",fontWeight:700}}>🍕 Cheat Day Eligible!</div>
-              <span style={{fontSize:"10px",color:"#7a4a00",background:"#1a0a00",border:"1px solid #3a2000",borderRadius:"4px",padding:"2px 6px"}}>{cheatDaysThisWeek()}/2 this week</span>
+              <span style={{fontSize:"10px",color:"#7a4a00",background:"#1a0a00",border:"1px solid #3a2000",borderRadius:"4px",padding:"2px 6px"}}>{cheatDaysThisWeek()}/1 this week</span>
             </div>
             <div style={{fontSize:"11px",color:"#d97706",marginBottom:"10px",lineHeight:"1.6"}}>{getCheatSuggestionReason(selectedDate)}<br/>Hourly reminders band honge, rest karo!</div>
-            <button style={{...s.btn("orange"),width:"100%"}} onClick={()=>setShowCheatConfirm(true)}>🎉 Cheat Day Declare Karo</button>
+            <div style={{display:"flex",gap:"8px"}}>
+              <button style={{...s.btn("orange"),flex:1}} onClick={()=>setShowCheatConfirm(true)}>🎉 Declare Karo</button>
+              <button style={{background:"#1a0a00",border:"1px solid #4a2a00",color:"#7a4a00",borderRadius:"8px",padding:"8px 14px",cursor:"pointer",fontSize:"12px",fontFamily:"inherit",fontWeight:700}} onClick={()=>setCheatSuggestionDismissed(true)}>✕ Abhi Nahi</button>
+            </div>
           </div>
         )}
 
@@ -772,18 +768,7 @@ Max 40 lines. Direct. Hinglish.`;
             </div>
           )}
 
-          <div style={{fontSize:"10px",color:"#2a4a3a",lineHeight:"1.8",background:"#0a1a0a",padding:"8px",borderRadius:"6px",border:"1px solid #1a2a1a"}}>
-            💡 <b style={{color:"#3a8a4a"}}>Kaise use karo:</b><br/>
-            • Subject select karo → kya karna hai fill karo → "Add" dabaao<br/>
-            • Dusra subject select karo → fill karo → "Add" karo<br/>
-            • Sab add ho jaaye toh "Save All" dabaao<br/>
-            <br/>
-            <b style={{color:"#60a5fa"}}>Examples:</b><br/>
-            Medicine: 20pg + 50 QBank + Analyse → <span style={{color:"#4ade80"}}>add</span><br/>
-            Surgery: 2hr video → <span style={{color:"#4ade80"}}>add</span><br/>
-            Anatomy: 30pg → <span style={{color:"#4ade80"}}>add</span><br/>
-            → Save All (3 targets)
-          </div>
+
         </div>
 
         {/* FULL REPORT BUTTON */}
@@ -1068,7 +1053,7 @@ Max 40 lines. Direct. Hinglish.`;
             </div>
           </div>
           <div style={{fontSize:"11px",color:"#5a6880",marginBottom:"10px",lineHeight:"1.7"}}>
-            <b style={{color:"#d97706"}}>Rules:</b> Sunday pe auto-suggest • Ya hafte ke 60%+ din ke targets achieve ho toh eligible • Max 1/week<br/>
+            <b style={{color:"#d97706"}}>Rules:</b> Sirf Sunday • Weekly avg targets ≥ 85% hona chahiye • Max 1/week<br/>
             Recent: {Object.keys(cheatDays).sort().reverse().slice(0,3).join(", ")||"None yet"}
           </div>
           <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
