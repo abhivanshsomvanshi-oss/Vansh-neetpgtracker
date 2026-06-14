@@ -10,26 +10,76 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#0a0a12;}</style>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#0a0a12;}
+.notif-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;}
+.notif-box{background:linear-gradient(135deg,#0d0d25,#0a1a2e);border:2px solid #7c3aed;border-radius:16px;padding:24px;max-width:380px;width:100%;box-shadow:0 0 40px rgba(124,58,237,0.4);}
+.notif-title{font-size:18px;font-weight:700;color:#a78bfa;margin-bottom:8px;font-family:'DM Mono',monospace;}
+.notif-body{font-size:13px;color:#c4b5fd;margin-bottom:16px;line-height:1.7;font-family:'DM Mono',monospace;}
+.notif-inp{width:100%;background:#070714;border:1px solid #4f46e5;color:#ddd8f0;border-radius:8px;padding:10px 12px;font-size:13px;font-family:'DM Mono',monospace;outline:none;margin-bottom:12px;box-sizing:border-box;resize:vertical;min-height:80px;}
+.notif-btn{padding:10px 20px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-family:'DM Mono',monospace;font-weight:700;color:#fff;background:linear-gradient(135deg,#7c3aed,#4f46e5);margin-right:8px;}
+.notif-btn.skip{background:linear-gradient(135deg,#374151,#1f2937);}
+.chat-msg{padding:10px 13px;border-radius:10px;margin-bottom:8px;font-size:12px;line-height:1.7;font-family:'DM Mono',monospace;max-width:88%;word-break:break-word;}
+.chat-msg.user{background:#1a0a3e;border:1px solid #5b21b6;color:#c4b5fd;margin-left:auto;border-bottom-right-radius:3px;}
+.chat-msg.ai{background:#050f1a;border:1px solid #1e3a5f;color:#93c5fd;margin-right:auto;border-bottom-left-radius:3px;}
+.chat-typing{color:#5a6880;font-size:11px;font-style:italic;padding:4px 0;}
+</style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
+
 const SUBJECTS = ["Anatomy","Physiology","Biochemistry","Pathology","Pharmacology","Microbiology","Forensic Medicine","Community Medicine","ENT","Ophthalmology","Medicine","Surgery","Obstetrics","Gynaecology","Pediatrics","Orthopedics","Radiology","Anesthesia","Psychiatry"];
-const HOURS = Array.from({length:24},(_,i)=>`${String(i).padStart(2,"0")}:00`);
-const SOURCE_TYPES = ["Textbook","BTR Notes","Handwritten Notes","Slides/PDF","Video Notes","Revision Notes"];
+
+// 24 time slots: 00:00–01:00 ... 23:00–00:00
+const TIME_SLOTS = Array.from({length:24},(_,i)=>{
+  const s = `${String(i).padStart(2,"0")}:00`;
+  const e = i===23?"00:00":`${String(i+1).padStart(2,"0")}:00`;
+  return {key:`${s}-${e}`, label:`${s} – ${e}`, hour:i};
+});
+
 const getToday = () => new Date().toISOString().split("T")[0];
-const TABS = ["📅 Daily Log","📖 Reading","🧪 QBank","📊 Reports","⚙️ Settings"];
+const TABS = ["📅 Daily","📖 Reading","🧪 QBank","📊 Reports","⚙️ Settings"];
+
+// ── Notification Permission ──
+const requestNotifPermission = async () => {
+  if(!("Notification" in window)) return false;
+  if(Notification.permission==="granted") return true;
+  const p = await Notification.requestPermission();
+  return p==="granted";
+};
+
+const sendBrowserNotif = (title, body) => {
+  if(Notification.permission==="granted"){
+    new Notification(title,{body, icon:"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"});
+  }
+};
+
+// Register Service Worker for background notifications
+const registerSW = () => {
+  if("serviceWorker" in navigator){
+    const sw = `
+self.addEventListener('message', e => {
+  if(e.data && e.data.type === 'SHOW_NOTIF'){
+    self.registration.showNotification(e.data.title, {body: e.data.body, icon: '/icon.png', badge: '/icon.png', requireInteraction: true, tag: 'medtracker-hourly'});
+  }
+});
+self.addEventListener('notificationclick', e => { e.notification.close(); clients.openWindow('/'); });
+`;
+    const blob = new Blob([sw],{type:"application/javascript"});
+    const url = URL.createObjectURL(blob);
+    navigator.serviceWorker.register(url).catch(()=>{});
+  }
+};
 
 function App() {
   const [tab, setTab] = useState(0);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("gemini_key") || "");
   const [apiKeyInput, setApiKeyInput] = useState(() => localStorage.getItem("gemini_key") || "");
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("gemini_key") || "");
   const [logs, setLogs] = useState(() => { try { return JSON.parse(localStorage.getItem("daily_logs") || "{}"); } catch { return {}; } });
   const [selectedDate, setSelectedDate] = useState(getToday());
-  const [aiAnalysis, setAiAnalysis] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
   const [readingData, setReadingData] = useState(() => { try { return JSON.parse(localStorage.getItem("reading_data") || "{}"); } catch { return {}; } });
   const [rdDate, setRdDate] = useState(getToday());
   const [rdSubject, setRdSubject] = useState(SUBJECTS[0]);
@@ -54,28 +104,90 @@ function App() {
   const [goalPages, setGoalPages] = useState("");
   const [goalVideoHours, setGoalVideoHours] = useState("");
   const [goalDate, setGoalDate] = useState(getToday());
-  const [aiGoalSuggestion, setAiGoalSuggestion] = useState("");
-  const [goalLoading, setGoalLoading] = useState(false);
   const [readCounts, setReadCounts] = useState(() => { try { return JSON.parse(localStorage.getItem("read_counts") || "{}"); } catch { return {}; } });
   const [reportOutput, setReportOutput] = useState("");
   const [reportLoading, setReportLoading] = useState(false);
+  const [fullAnalysis, setFullAnalysis] = useState("");
+  const [fullLoading, setFullLoading] = useState(false);
 
-  useEffect(() => localStorage.setItem("daily_logs", JSON.stringify(logs)), [logs]);
-  useEffect(() => localStorage.setItem("qbank_data", JSON.stringify(qbankData)), [qbankData]);
-  useEffect(() => localStorage.setItem("reading_data", JSON.stringify(readingData)), [readingData]);
-  useEffect(() => localStorage.setItem("daily_goals", JSON.stringify(goals)), [goals]);
-  useEffect(() => localStorage.setItem("read_counts", JSON.stringify(readCounts)), [readCounts]);
+  // Notification & popup states
+  const [showHourlyPopup, setShowHourlyPopup] = useState(false);
+  const [popupSlot, setPopupSlot] = useState(null);
+  const [popupInput, setPopupInput] = useState("");
+  const [wakeTime, setWakeTime] = useState(() => localStorage.getItem("wake_time") || "08:00");
+  const [notifEnabled, setNotifEnabled] = useState(() => localStorage.getItem("notif_enabled")==="true");
+  const [showWakeSetup, setShowWakeSetup] = useState(false);
+  const [lastHourPrompted, setLastHourPrompted] = useState(() => parseInt(localStorage.getItem("last_hour_prompted")||"-1"));
+  const [midnightPopupShown, setMidnightPopupShown] = useState(() => localStorage.getItem("midnight_popup_shown")===getToday());
 
-  const saveApiKey = () => { localStorage.setItem("gemini_key", apiKeyInput); setApiKey(apiKeyInput); alert("API Key saved!"); };
+  // Chat states
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef();
+
+  useEffect(()=>localStorage.setItem("daily_logs",JSON.stringify(logs)),[logs]);
+  useEffect(()=>localStorage.setItem("qbank_data",JSON.stringify(qbankData)),[qbankData]);
+  useEffect(()=>localStorage.setItem("reading_data",JSON.stringify(readingData)),[readingData]);
+  useEffect(()=>localStorage.setItem("daily_goals",JSON.stringify(goals)),[goals]);
+  useEffect(()=>localStorage.setItem("read_counts",JSON.stringify(readCounts)),[readCounts]);
+  useEffect(()=>localStorage.setItem("notif_enabled",notifEnabled),[notifEnabled]);
+  useEffect(()=>localStorage.setItem("last_hour_prompted",lastHourPrompted),[lastHourPrompted]);
+
+  // Register SW on mount
+  useEffect(()=>{ registerSW(); },[]);
+
+  // Request notification permission
+  const enableNotifications = async () => {
+    const granted = await requestNotifPermission();
+    if(granted){ setNotifEnabled(true); alert("✅ Notifications ON! Hourly reminders chalenge."); }
+    else{ alert("❌ Notification permission denied. Browser settings mein allow karo."); }
+  };
+
+  // Hourly notification check
+  useEffect(()=>{
+    if(!notifEnabled) return;
+    const check = () => {
+      const now = new Date();
+      const currentHour = now.getHours();
+      const currentMin = now.getMinutes();
+      const wakeHour = parseInt(wakeTime.split(":")[0]);
+
+      // Midnight popup: around 23:45–00:15 ask wake time for tomorrow
+      if(currentHour===23 && currentMin>=45 && !midnightPopupShown){
+        setShowWakeSetup(true);
+        setMidnightPopupShown(true);
+        localStorage.setItem("midnight_popup_shown", getToday());
+        sendBrowserNotif("🩺 MedTracker – Kal ka plan?", "Wake-up time set karo kal ke liye!");
+      }
+
+      // Hourly popup: only after wake time, every hour at ~:00 to :05
+      if(currentHour >= wakeHour && currentMin <= 7 && currentHour !== lastHourPrompted){
+        const slot = TIME_SLOTS[currentHour];
+        setPopupSlot(slot);
+        setPopupInput("");
+        setShowHourlyPopup(true);
+        setLastHourPrompted(currentHour);
+        sendBrowserNotif(`⏰ ${slot.label}`, "Kya kiya is ghante? MedTracker mein bharo!");
+      }
+    };
+    check();
+    const interval = setInterval(check, 60000);
+    return ()=>clearInterval(interval);
+  },[notifEnabled, wakeTime, lastHourPrompted, midnightPopupShown]);
+
+  // Scroll chat to bottom
+  useEffect(()=>{ chatEndRef.current?.scrollIntoView({behavior:"smooth"}); },[chatMessages]);
+
+  const saveApiKey = () => { localStorage.setItem("gemini_key",apiKeyInput); setApiKey(apiKeyInput); alert("Key save ho gayi!"); };
 
   const exportData = () => {
-    const data = { version:"2.0", exportDate:new Date().toISOString(), daily_logs:logs, reading_data:readingData, qbank_data:qbankData, daily_goals:goals, read_counts:readCounts };
+    const data = {version:"3.0",exportDate:new Date().toISOString(),daily_logs:logs,reading_data:readingData,qbank_data:qbankData,daily_goals:goals,read_counts:readCounts};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href=url; a.download=`MedTracker_Backup_${getToday()}.json`; a.click(); URL.revokeObjectURL(url);
   };
-
-  const importRef = React.useRef();
+  const importRef = useRef();
   const importData = (e) => {
     const file = e.target.files[0]; if(!file) return;
     const reader = new FileReader();
@@ -95,479 +207,474 @@ function App() {
   };
 
   const saveGoal = () => {
-    if(!goalPages&&!goalVideoHours){alert("Pages ya Video Hours target toh bharo!");return;}
-    if(goalPages&&+goalPages<0){alert("Pages target sahi bharo!");return;}
-    if(goalVideoHours&&+goalVideoHours<0){alert("Video Hours target sahi bharo!");return;}
+    if(!goalPages&&!goalVideoHours){alert("Pages ya Video Hours target bharo!");return;}
     const existing=(goals[goalDate]||[]).filter(g=>g.subject!==goalSubject);
     existing.push({subject:goalSubject,targetPages:goalPages?+goalPages:0,targetVideoHours:goalVideoHours?+goalVideoHours:0,date:goalDate,id:Date.now()});
     setGoals(prev=>({...prev,[goalDate]:existing}));
-    setGoalPages("");
-    setGoalVideoHours("");
+    setGoalPages(""); setGoalVideoHours("");
   };
-  const deleteGoal = (date,id) => setGoals(prev=>({...prev,[date]:(prev[date]||[]).filter(g=>g.id!==id)}));
-  const getTodayGoals = () => goals[getToday()]||[];
-  const getGoalProgress = (subject,date) => {
+  const deleteGoal=(date,id)=>setGoals(prev=>({...prev,[date]:(prev[date]||[]).filter(g=>g.id!==id)}));
+  const getTodayGoals=()=>goals[getToday()]||[];
+  const getGoalProgress=(subject,date)=>{
     const target=(goals[date]||[]).find(g=>g.subject===subject);
     if(!target) return null;
     const actualPages=(readingData[date]||[]).filter(e=>e.subject===subject).reduce((s,e)=>s+(e.pages||0),0);
     const actualVideo=(readingData[date]||[]).filter(e=>e.subject===subject).reduce((s,e)=>s+(e.videoHours||0),0);
-    const hasPages=target.targetPages>0;
-    const hasVideo=target.targetVideoHours>0;
+    const hasPages=target.targetPages>0, hasVideo=target.targetVideoHours>0;
     const pgPct=hasPages?Math.min(100,Math.round(actualPages/target.targetPages*100)):100;
     const vidPct=hasVideo?Math.min(100,Math.round(actualVideo/target.targetVideoHours*100)):100;
     const overallPct=hasPages&&hasVideo?Math.round((pgPct+vidPct)/2):hasPages?pgPct:vidPct;
     return {target:target.targetPages,actualPages,pct:overallPct,pgPct,vidPct,actualVideo,targetVideoHours:target.targetVideoHours||0,hasPages,hasVideo};
   };
-  const incrementReadCount = (subject) => setReadCounts(prev=>({...prev,[subject]:(prev[subject]||0)+1}));
-  const decrementReadCount = (subject) => setReadCounts(prev=>({...prev,[subject]:Math.max(0,(prev[subject]||0)-1)}));
-  const updateHourLog = (hour, val) => setLogs(prev => ({ ...prev, [selectedDate]: { ...(prev[selectedDate] || {}), [hour]: val } }));
-  const getDayLogs = (date) => logs[date] || {};
+  const incrementReadCount=(subject)=>setReadCounts(prev=>({...prev,[subject]:(prev[subject]||0)+1}));
+  const decrementReadCount=(subject)=>setReadCounts(prev=>({...prev,[subject]:Math.max(0,(prev[subject]||0)-1)}));
+  const updateHourLog=(slotKey,val)=>setLogs(prev=>({...prev,[selectedDate]:{...(prev[selectedDate]||{}),[slotKey]:val}}));
+  const getDayLogs=(date)=>logs[date]||{};
 
-  const callAI = async (prompt, images = [], maxOut = 1000) => {
-    const key = localStorage.getItem("gemini_key") || "";
-    if (!key) throw new Error("Gemini API Key nahi hai! Settings tab > API Key field mein daalo. Free: aistudio.google.com/apikey");
-    const parts = [];
-    for (const img of images) {
-      if (img.source && img.source.data) {
-        parts.push({ inline_data: { mime_type: img.source.media_type, data: img.source.data } });
-      }
+  const callAI = async (prompt, images=[], maxOut=1500) => {
+    const key = localStorage.getItem("gemini_key")||"";
+    if(!key) throw new Error("Gemini API Key nahi hai! Settings > API Key mein daalo. Free: aistudio.google.com/apikey");
+    const parts=[];
+    for(const img of images){
+      if(img.source&&img.source.data) parts.push({inline_data:{mime_type:img.source.media_type,data:img.source.data}});
     }
-    parts.push({ text: prompt });
+    parts.push({text:prompt});
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-      { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts }], generationConfig: { maxOutputTokens: maxOut } }) }
+      {method:"POST",headers:{"Content-Type":"application/json"},
+       body:JSON.stringify({contents:[{parts}],generationConfig:{maxOutputTokens:maxOut}})}
     );
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return data.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "No response";
+    if(data.error) throw new Error(data.error.message);
+    return data.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"No response";
   };
 
-  const addReadingEntry = () => {
-    if (!rdPages && !rdVideoHours) { alert("Pages ya Video Hours mein se kuch toh bharo!"); return; }
-    const entry = { id: Date.now(), date: rdDate, subject: rdSubject, pages: rdPages?+rdPages:0, fromPage: rdFromPage?+rdFromPage:null, toPage: rdToPage?+rdToPage:null, videoHours: rdVideoHours?+rdVideoHours:0, flashcards: rdFlashcards?+rdFlashcards:0 };
-    setReadingData(prev => ({ ...prev, [rdDate]: [...(prev[rdDate] || []), entry] }));
+  const addReadingEntry=()=>{
+    if(!rdPages&&!rdVideoHours){alert("Pages ya Video Hours bharo!");return;}
+    const entry={id:Date.now(),date:rdDate,subject:rdSubject,pages:rdPages?+rdPages:0,fromPage:rdFromPage?+rdFromPage:null,toPage:rdToPage?+rdToPage:null,videoHours:rdVideoHours?+rdVideoHours:0,flashcards:rdFlashcards?+rdFlashcards:0};
+    setReadingData(prev=>({...prev,[rdDate]:[...(prev[rdDate]||[]),entry]}));
     setRdPages(""); setRdFromPage(""); setRdToPage(""); setRdVideoHours(""); setRdFlashcards("");
   };
-  const deleteReadingEntry = (date, id) => setReadingData(prev => ({ ...prev, [date]: (prev[date] || []).filter(e => e.id !== id) }));
+  const deleteReadingEntry=(date,id)=>setReadingData(prev=>({...prev,[date]:(prev[date]||[]).filter(e=>e.id!==id)}));
 
-  const getReadingStats = () => {
-    const all = Object.values(readingData).flat();
-    const bySubject = {};
-    all.forEach(e => {
-      if (!bySubject[e.subject]) bySubject[e.subject] = { pages: 0, sessions: 0, videoHours: 0, flashcards: 0 };
-      bySubject[e.subject].pages += (e.pages||0);
-      bySubject[e.subject].videoHours += (e.videoHours||0);
-      bySubject[e.subject].flashcards += (e.flashcards||0);
-      bySubject[e.subject].sessions += 1;
+  const getReadingStats=()=>{
+    const all=Object.values(readingData).flat();
+    const bySubject={};
+    all.forEach(e=>{
+      if(!bySubject[e.subject]) bySubject[e.subject]={pages:0,sessions:0,videoHours:0,flashcards:0};
+      bySubject[e.subject].pages+=(e.pages||0);
+      bySubject[e.subject].videoHours+=(e.videoHours||0);
+      bySubject[e.subject].flashcards+=(e.flashcards||0);
+      bySubject[e.subject].sessions+=1;
     });
-    return {
-      bySubject,
-      totalPages: all.reduce((s,e) => s+(e.pages||0), 0),
-      totalVideoHours: all.reduce((s,e) => s+(e.videoHours||0), 0),
-      totalFlashcards: all.reduce((s,e) => s+(e.flashcards||0), 0),
-      totalSessions: all.length
-    };
+    return {bySubject,totalPages:all.reduce((s,e)=>s+(e.pages||0),0),totalVideoHours:all.reduce((s,e)=>s+(e.videoHours||0),0),totalFlashcards:all.reduce((s,e)=>s+(e.flashcards||0),0),totalSessions:all.length};
   };
 
-  const getReadingSummaryForReport = (days = null) => {
-    let entries = Object.values(readingData).flat();
-    if (days) { const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days); entries = entries.filter(e => new Date(e.date) >= cutoff); }
-    const bySubject = {};
-    entries.forEach(e => { if (!bySubject[e.subject]) bySubject[e.subject] = { pages: 0, sessions: 0, topics: [] }; bySubject[e.subject].pages += e.pages; bySubject[e.subject].sessions += 1; bySubject[e.subject].topics.push(e.topic); });
-    return Object.entries(bySubject).map(([s, d]) => `${s}: ${d.pages} pages, ${d.sessions} sessions, Topics: ${[...new Set(d.topics)].join(", ")}`).join("\n") || "No reading data";
+  const getReadingSummaryForReport=(days=null)=>{
+    let entries=Object.values(readingData).flat();
+    if(days){const cutoff=new Date();cutoff.setDate(cutoff.getDate()-days);entries=entries.filter(e=>new Date(e.date)>=cutoff);}
+    const bySubject={};
+    entries.forEach(e=>{if(!bySubject[e.subject])bySubject[e.subject]={pages:0,sessions:0};bySubject[e.subject].pages+=e.pages;bySubject[e.subject].sessions+=1;});
+    return Object.entries(bySubject).map(([s,d])=>`${s}: ${d.pages} pages, ${d.sessions} sessions`).join("\n")||"No reading data";
   };
 
-  const analyseDay = async () => {
-    const dayLog = getDayLogs(selectedDate);
-    const filled = Object.entries(dayLog).filter(([, v]) => v?.trim());
-    if (!filled.length) { alert("Pehle kuch activities log karo!"); return; }
-    setAiLoading(true); setAiAnalysis("");
-    try {
-      const logText = filled.map(([h, v]) => `${h} – ${v}`).join("\n");
-      const readToday = (readingData[selectedDate] || []).map(e => `${e.subject}/${e.topic}: ${e.pages}pg (${e.source})`).join("\n") || "No reading logged";
-      const todayGoalsText = (goals[selectedDate]||[]).map(g=>{
-        const prog=getGoalProgress(g.subject,selectedDate);
-        let status=g.subject+": ";
-        if(g.targetPages>0) status+="pages target "+g.targetPages+"pg → actual "+(prog?prog.actualPages:0)+"pg ("+(prog?prog.pgPct:0)+"%) ";
-        if(g.targetVideoHours>0) status+="video target "+g.targetVideoHours+"hr → actual "+(prog?prog.actualVideo:0)+"hr ("+(prog?prog.vidPct:0)+"%)";
-        return status;
-      }).join(", ")||"No targets set";
-      const todayVid = (readingData[selectedDate]||[]).reduce((a,e)=>a+(e.videoHours||0),0);
-      const todayFC = (readingData[selectedDate]||[]).reduce((a,e)=>a+(e.flashcards||0),0);
-      const prompt = `NEET PG Daily Coach - ${selectedDate}
-HOURLY LOG: ${logText}
-READING: ${readToday} | Video: ${todayVid}hrs | Flashcards: ${todayFC}
-TARGETS: ${todayGoalsText}
-IMPORTANT INSTRUCTION: Kal ke targets mein KABHI bhi subah jaldi uthne ya 5am/6am wala suggestion MAT dena. Student raat ko late tak padhta hai – suggestions RAAT ke time slots (10pm–2am) mein study badhane ke dena.
-Reply ONLY in this format - NO paragraphs:
-TIME AUDIT: Productive [X]hrs | Wasted [X]hrs
-Wasted: [slot]→[reason 4 words], [slot]→[reason]
-TARGETS: [subject] [met/missed by X pages]
-EFFICIENCY: [X]/10
-BEST THING TODAY: [1 line]
-WORST THING TODAY: [1 line]
-KAL KA TARGETS:
-- [Subject]: [X] pages
-- [Subject]: [X] video hrs
-- [Subject]: [X] flashcards
-TIP: [1 NEET PG specific tip]
-Max 20 lines. Hindi/English mix.`;
-      setAiAnalysis(await callAI(prompt));
-    } catch (e) { setAiAnalysis("Error: " + e.message); }
-    setAiLoading(false);
-  };
-
-  const [fullAnalysis, setFullAnalysis] = useState("");
-  const [fullLoading, setFullLoading] = useState(false);
-
+  // ── MAIN: Full Day Combined Analysis ──
   const analyseFullDay = async () => {
     const date = selectedDate;
-    const dayLog = logs[date] || {};
-    const filled = Object.entries(dayLog).filter(([,v]) => v?.trim());
-    const readEntries = readingData[date] || [];
-    const qEntries = qbankData[date] || [];
-    if (!filled.length && !readEntries.length && !qEntries.length) {
-      alert("Kuch bhi log nahi hai aaj ka!"); return;
-    }
-    setFullLoading(true); setFullAnalysis("");
+    const dayLog = logs[date]||{};
+    const filled = Object.entries(dayLog).filter(([,v])=>v?.trim());
+    const readEntries = readingData[date]||[];
+    const qEntries = qbankData[date]||[];
+    const dayGoals = goals[date]||[];
+    if(!filled.length&&!readEntries.length&&!qEntries.length){alert("Kuch bhi log nahi hai!"); return;}
+    setFullLoading(true); setFullAnalysis(""); setChatMessages([]);
     try {
-      const logText = filled.length ? filled.map(([h,v])=>`${h} – ${v}`).join("\n") : "No hourly log";
-      const readText = readEntries.length
-        ? readEntries.map(e=>`${e.subject}/${e.topic}: ${e.pages||0}pg, ${e.videoHours||0}hr video, ${e.flashcards||0}FC (${e.source})`).join("\n")
-        : "No reading logged";
-      const totalPages = readEntries.reduce((a,e)=>a+(e.pages||0),0);
-      const totalVid = readEntries.reduce((a,e)=>a+(e.videoHours||0),0);
-      const totalFC = readEntries.reduce((a,e)=>a+(e.flashcards||0),0);
-      const qText = qEntries.length
-        ? qEntries.map(e=>`${e.subject} – ${e.topic}: ${e.wrong}/${e.total} wrong (${e.total>0?Math.round(e.wrong/e.total*100):0}% error)`).join("\n")
-        : "No QBank done";
-      const totalQ = qEntries.reduce((a,e)=>a+e.total,0);
-      const totalW = qEntries.reduce((a,e)=>a+e.wrong,0);
-      const goalText = (goals[date]||[]).map(g=>{
-        const prog=getGoalProgress(g.subject,date);
-        let s=g.subject+": ";
-        if(g.targetPages>0) s+=`pages ${prog?prog.actualPages:0}/${g.targetPages}pg (${prog?prog.pgPct:0}%) `;
-        if(g.targetVideoHours>0) s+=`video ${prog?prog.actualVideo:0}/${g.targetVideoHours}hr (${prog?prog.vidPct:0}%)`;
-        return s;
-      }).join("\n") || "No targets set";
+      const logText = filled.length?filled.map(([h,v])=>`${h}: ${v}`).join("\n"):"No hourly log";
+      const totalPages=readEntries.reduce((a,e)=>a+(e.pages||0),0);
+      const totalVid=readEntries.reduce((a,e)=>a+(e.videoHours||0),0);
+      const totalFC=readEntries.reduce((a,e)=>a+(e.flashcards||0),0);
+      const totalQ=qEntries.reduce((a,e)=>a+e.total,0);
+      const totalW=qEntries.reduce((a,e)=>a+e.wrong,0);
+      const accuracy=totalQ>0?Math.round((1-totalW/totalQ)*100):null;
 
-      const prompt = `Tu ek NEET PG coach hai. Student ka POORA din analyze kar aur ek comprehensive report de.
+      // Targets vs actual
+      const targetLines = dayGoals.map(g=>{
+        const prog=getGoalProgress(g.subject,date);
+        let s=`${g.subject}: `;
+        if(g.targetPages>0) s+=`Pages ${prog?prog.actualPages:0}/${g.targetPages} (${prog?prog.pgPct:0}%) `;
+        if(g.targetVideoHours>0) s+=`Video ${prog?prog.actualVideo:0}/${g.targetVideoHours}hr (${prog?prog.vidPct:0}%)`;
+        const met=(prog?prog.pct:0)>=100;
+        s+=met?" ✅ MET":" ❌ MISSED";
+        return s;
+      }).join("\n")||"No targets set";
+
+      // Wrong Q breakdown
+      const wrongBreakdown=qEntries.filter(e=>e.wrong>0).map(e=>`${e.subject}/${e.topic}: ${e.wrong}/${e.total} wrong`).join("\n")||"None";
+
+      const prompt=`Tu NEET PG coach hai. Hinglish mein bol — short, direct, no fluff.
 
 DATE: ${date}
 
 ━━ HOURLY SCHEDULE ━━
 ${logText}
 
-━━ READING/VIDEO LOG ━━
-${readText}
+━━ READING ━━
+${readEntries.map(e=>`${e.subject}: ${e.pages||0}pg, ${e.videoHours||0}hr video, ${e.flashcards||0} FC`).join("\n")||"Nothing"}
 TOTAL: ${totalPages}pg | ${totalVid}hr video | ${totalFC} flashcards
 
-━━ QBANK PERFORMANCE ━━
-${qText}
-TOTAL: ${totalQ} Qs attempted, ${totalW} wrong (${totalQ>0?Math.round(totalW/totalQ*100):0}% error rate)
+━━ QBANK ━━
+${wrongBreakdown}
+Total: ${totalQ} Qs | Wrong: ${totalW} | Accuracy: ${accuracy!==null?accuracy+"%":"N/A"}
 
-━━ TARGETS vs ACTUAL ━━
-${goalText}
+━━ TARGETS VS ACTUAL ━━
+${targetLines}
 
-IMPORTANT: Suggestions mein KABHI bhi subah jaldi uthne (5am/6am) ka mat bolna. Raat ke time slots (10pm–2am) mein study badhane ka bol.
+FORMAT (use emojis, keep each section crisp — no long paragraphs):
 
-Ye exact format mein reply de – NO extra paragraphs:
+━━━ 📋 FULL DAY REPORT – ${date} ━━━
 
-━━━ FULL DAY REPORT: ${date} ━━━
+⏱️ TIME AUDIT
+Productive: Xhr | Wasted: Xhr
+Wasted kahan: [slot → reason, 5 words max each]
 
-⏱ TIME AUDIT
-Productive: [X]hrs | Wasted: [X]hrs
-Wasted slots: [list with reason]
-
-📖 READING SUMMARY
-Pages: [X] | Video: [X]hr | FC: [X]
-Best subject today: [subject]
-Weakest effort: [subject]
+📖 READING SNAPSHOT
+Pages: ${totalPages} | Video: ${totalVid}hr | FC: ${totalFC}
+Best subject: __ | Sabse weak effort: __
 
 🎯 TARGET ACHIEVEMENT
-[For each target: subject → pages%/video% → met/missed]
-Overall: [X/Y targets achieved]
+[har target: subject → actual/target → MET/MISSED by X]
+Overall: X/Y targets met
 
-🧠 QBANK ANALYSIS
-Accuracy: [X]% | Strong: [subjects] | Weak: [subjects]
-Top mistake pattern: [1 line]
+❌ MISTAKES ANALYSIS (PRIORITY SECTION)
+[har galat topic ke liye:]
+• Subject/Topic: X/${totalQ>0?totalQ:""} wrong → Root cause (1 line) → Fix kaise kare (1 line)
+Pattern: [common mistake type]
 
-📊 OVERALL EFFICIENCY: [X]/10
+📊 EFFICIENCY SCORE: X/10
 
-✅ TOP 3 WINS TODAY:
-1. 
-2. 
-3. 
+✅ 3 WINS:
+1. 2. 3.
 
-❌ TOP 3 PROBLEMS:
-1. 
-2. 
-3. 
+❌ 3 PROBLEMS:
+1. 2. 3.
 
-🚀 KAL KA PLAN (Night-focused):
-- [Subject]: [X] pages + [X] video hrs
-- [Subject]: [X] pages + [X] video hrs
-- QBank: [Subject] [X] Qs
-- Revision: [Subject]
+🌙 KAL KA PLAN (raat-focused, no 5am/6am wala):
+• [Subject]: X pages + X video
+• QBank: [Subject] X Qs — focus on [weak topic]
+• Revision: [topic]
 
 💡 NEET PG TIP: [1 high-yield specific tip]
 
-Max 35 lines. Hindi/English mix. Be direct aur honest.`;
+Hinglish mein. Direct. Max 40 lines.`;
 
-      setFullAnalysis(await callAI(prompt, [], 2000));
-    } catch(e) { setFullAnalysis("Error: " + e.message); }
+      const result = await callAI(prompt,[],2500);
+      setFullAnalysis(result);
+      // Seed chat context
+      setChatMessages([{role:"system_context", content: result, hidden:true}]);
+    } catch(e){setFullAnalysis("Error: "+e.message);}
     setFullLoading(false);
   };
 
-  const addQBankEntry = () => {
-    if (!qbankTopic.trim() || !qTotal || qWrong === "") { alert("Topic, Total aur Wrong fields bharo!"); return; }
-    const entry = { date: qbankDate, subject: qbankSubject, topic: qbankTopic.trim(), total: +qTotal, wrong: +qWrong, notes: qNotes.trim(), id: Date.now() };
-    setQbankData(prev => ({ ...prev, [qbankDate]: [...(prev[qbankDate] || []), entry] }));
+  // ── AI Chat ──
+  const sendChat = async () => {
+    if(!chatInput.trim()) return;
+    const userMsg = chatInput.trim();
+    setChatInput("");
+    const newMsgs = [...chatMessages, {role:"user",content:userMsg}];
+    setChatMessages(newMsgs);
+    setChatLoading(true);
+    try {
+      const context = fullAnalysis?`Context (today's report):\n${fullAnalysis}\n\n`:"";
+      const history = newMsgs.filter(m=>m.role!=="system_context").slice(-6).map(m=>`${m.role==="user"?"Student":"Coach"}: ${m.content}`).join("\n");
+      const prompt = `${context}Tu NEET PG coach hai. Hinglish mein bol — helpful, direct, specific. Student ke saath freely baat kar, mistakes improve karo.\n\nConversation:\n${history}\nCoach:`;
+      const reply = await callAI(prompt,[],800);
+      setChatMessages(prev=>[...prev,{role:"ai",content:reply}]);
+    } catch(e){ setChatMessages(prev=>[...prev,{role:"ai",content:"Error: "+e.message}]); }
+    setChatLoading(false);
+  };
+
+  const addQBankEntry=()=>{
+    if(!qbankTopic.trim()||!qTotal||qWrong===""){alert("Topic, Total aur Wrong bharo!");return;}
+    const entry={date:qbankDate,subject:qbankSubject,topic:qbankTopic.trim(),total:+qTotal,wrong:+qWrong,notes:qNotes.trim(),id:Date.now()};
+    setQbankData(prev=>({...prev,[qbankDate]:[...(prev[qbankDate]||[]),entry]}));
     setQbankTopic(""); setQTotal(""); setQWrong(""); setQNotes("");
   };
-  const deleteQBankEntry = (date, id) => setQbankData(prev => ({ ...prev, [date]: (prev[date] || []).filter(e => e.id !== id) }));
+  const deleteQBankEntry=(date,id)=>setQbankData(prev=>({...prev,[date]:(prev[date]||[]).filter(e=>e.id!==id)}));
 
-  const analyseScreenshots = async (files) => {
-    if (!files.length) return;
+  const analyseScreenshots=async(files)=>{
+    if(!files.length) return;
     setSsLoading(true); setScreenshotAnalysis("");
     try {
-      const imgs = await Promise.all(Array.from(files).map(f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res({ type: "image", source: { type: "base64", media_type: f.type, data: r.result.split(",")[1] } }); r.onerror = rej; r.readAsDataURL(f); })));
-      const prompt = `These are screenshots of wrong QBank answers from an MBBS student.\nAnalyse ALL and provide:\n1. Subject & Topic for each wrong question\n2. Pattern of mistakes\n3. Summary table: Subject | Topic | # Mistakes\n4. Top 3 priority topics to revise\n5. Quick revision tip per weak topic\nHindi/English mix ok.`;
-      const text = await callAI(prompt, imgs);
+      const imgs=await Promise.all(Array.from(files).map(f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res({type:"image",source:{type:"base64",media_type:f.type,data:r.result.split(",")[1]}});r.onerror=rej;r.readAsDataURL(f);})));
+      const prompt=`MBBS student ke galat QBank answers ke screenshots hain.\nHinglish mein batao:\n1. Har wrong question ka Subject & Topic\n2. Mistake pattern\n3. Table: Subject | Topic | # Mistakes\n4. Top 3 topics to revise\n5. Quick fix tip per weak topic\nShort aur direct raho.`;
+      const text=await callAI(prompt,imgs,1200);
       setScreenshotAnalysis(text);
-      const today = getToday();
-      setQbankData(prev => ({ ...prev, [today]: [...(prev[today] || []), { date: today, subject: "Mixed (SS)", topic: `Screenshot Batch – ${files.length} imgs`, total: files.length, wrong: files.length, notes: text.substring(0, 300), id: Date.now() }] }));
-    } catch (e) { setScreenshotAnalysis("Error: " + e.message); }
+      const today=getToday();
+      setQbankData(prev=>({...prev,[today]:[...(prev[today]||[]),{date:today,subject:"Mixed (SS)",topic:`Screenshot Batch – ${files.length} imgs`,total:files.length,wrong:files.length,notes:text.substring(0,300),id:Date.now()}]}));
+    } catch(e){setScreenshotAnalysis("Error: "+e.message);}
     setSsLoading(false);
   };
 
-  const generateReport = async () => {
+  const generateReport=async()=>{
     setReportLoading(true); setReportOutput("");
     try {
-      const today = getToday(); let prompt = "";
-      if (reportType === "daily") {
-        const dayLog = getDayLogs(today), qToday = qbankData[today] || [], rdToday = readingData[today] || [];
-        const logText = Object.entries(dayLog).filter(([, v]) => v?.trim()).map(([h, v]) => `${h}: ${v}`).join("\n") || "No hourly logs";
-        const qText = qToday.map(e => `${e.subject}/${e.topic}: ${e.wrong}/${e.total} wrong`).join("\n") || "No QBank today";
-        const rdText = rdToday.map(e => `${e.subject}/${e.topic}: ${e.pages}pg from ${e.source} [rating:${e.rating}/5]`).join("\n") || "No reading today";
-        prompt = `DAILY REPORT for MBBS student – ${today}\n\nHOURLY LOG:\n${logText}\n\nREADING (Total: ${rdToday.reduce((s, e) => s + e.pages, 0)} pages):\n${rdText}\n\nQBANK:\n${qText}\n\nProvide: 📊 Summary, 📖 Reading analysis, ✅ Well done, ❌ Needs improvement, 🎯 Tomorrow's action plan, ⏱️ Study hours estimate. Detailed. Hindi/English mix.`;
-      } else if (reportType === "weekly") {
-        const allDates = Object.keys(logs).sort().slice(-7);
-        const weekLogs = allDates.map(d => `${d}: ${Object.values(logs[d]).filter(Boolean).length} active slots`).join("\n") || "No data";
-        const weekQ = allDates.flatMap(d => qbankData[d] || []);
-        const subStats = {};
-        weekQ.forEach(e => { if (!subStats[e.subject]) subStats[e.subject] = { w: 0, t: 0 }; subStats[e.subject].w += e.wrong; subStats[e.subject].t += e.total; });
-        const qSummary = Object.entries(subStats).map(([s, { w, t }]) => `${s}: ${w}/${t} wrong`).join("\n") || "No QBank data";
-        const weeklyPages = allDates.flatMap(d => readingData[d] || []).reduce((s, e) => s + e.pages, 0);
-        prompt = `WEEKLY REPORT for MBBS student (last 7 days)\n\nACTIVITY:\n${weekLogs}\n\nREADING (Total: ${weeklyPages} pages):\n${getReadingSummaryForReport(7)}\n\nQBANK:\n${qSummary}\n\nProvide: 📈 Score /10, 📖 Reading consistency, 🔴 Top 3 weak topics, 🏆 Strong subjects, 📅 Next week plan, 🎯 MBBS completion estimate. Motivating. Hindi/English mix.`;
+      const today=getToday(); let prompt="";
+      if(reportType==="daily"){
+        const dayLog=getDayLogs(today),qToday=qbankData[today]||[],rdToday=readingData[today]||[];
+        const logText=Object.entries(dayLog).filter(([,v])=>v?.trim()).map(([h,v])=>`${h}: ${v}`).join("\n")||"No logs";
+        const qText=qToday.map(e=>`${e.subject}/${e.topic}: ${e.wrong}/${e.total} wrong`).join("\n")||"No QBank";
+        prompt=`NEET PG Daily Report – ${today}\nLogs:\n${logText}\nReading: ${rdToday.reduce((s,e)=>s+e.pages,0)}pg\nQBank:\n${qText}\nHinglish mein: Summary, Wins, Problems, Kal ka plan. Direct.`;
+      } else if(reportType==="weekly"){
+        const allDates=Object.keys(logs).sort().slice(-7);
+        const weeklyPages=allDates.flatMap(d=>readingData[d]||[]).reduce((s,e)=>s+e.pages,0);
+        const weekQ=allDates.flatMap(d=>qbankData[d]||[]);
+        const subStats={};
+        weekQ.forEach(e=>{if(!subStats[e.subject])subStats[e.subject]={w:0,t:0};subStats[e.subject].w+=e.wrong;subStats[e.subject].t+=e.total;});
+        const qSummary=Object.entries(subStats).map(([s,{w,t}])=>`${s}: ${w}/${t} wrong`).join("\n")||"No data";
+        prompt=`NEET PG Weekly Report (last 7 days)\nTotal pages: ${weeklyPages}\nActivity: ${allDates.map(d=>`${d}: ${Object.values(logs[d]).filter(Boolean).length} slots`).join(", ")}\nQBank:\n${qSummary}\nHinglish mein: Score/10, Top 3 weak topics, Next week plan. Motivating.`;
       } else {
-        const allQ = Object.values(qbankData).flat();
-        const subjectMap = {};
-        allQ.forEach(e => { if (!subjectMap[e.subject]) subjectMap[e.subject] = {}; if (!subjectMap[e.subject][e.topic]) subjectMap[e.subject][e.topic] = { w: 0 }; subjectMap[e.subject][e.topic].w += e.wrong; });
-        const qStats = Object.entries(subjectMap).map(([s, topics]) => `${s}:\n` + Object.entries(topics).map(([t, { w }]) => `  • ${t}: ${w} wrong`).join("\n")).join("\n\n") || "No QBank data";
-        const totalPages = Object.values(readingData).flat().reduce((s, e) => s + e.pages, 0);
-        prompt = `MONTHLY MBBS REPORT\n\nTotal days: ${Object.keys(logs).length}\nTotal pages: ${totalPages}\nTotal QBank Qs: ${allQ.reduce((s, e) => s + e.total, 0)}\n\nREADING BY SUBJECT:\n${getReadingSummaryForReport(null)}\n\nQBANK MISTAKES:\n${qStats}\n\nProvide: 📊 Overview, 📖 Reading per subject progress, 🔴 Top 5 weak topics, ✅ Strong areas, 🗺️ Revision roadmap, ⏳ 19-subject completion timeline. Very detailed. Hindi/English mix.`;
+        const allQ=Object.values(qbankData).flat();
+        const totalPages=Object.values(readingData).flat().reduce((s,e)=>s+e.pages,0);
+        prompt=`NEET PG Monthly Report\nTotal pages: ${totalPages} | QBank Qs: ${allQ.reduce((s,e)=>s+e.total,0)}\nReading:\n${getReadingSummaryForReport(null)}\nHinglish mein: Overview, Top 5 weak topics, Revision roadmap. Detailed.`;
       }
-      setReportOutput(await callAI(prompt));
-    } catch (e) { setReportOutput("Error: " + e.message); }
+      setReportOutput(await callAI(prompt,[],1500));
+    } catch(e){setReportOutput("Error: "+e.message);}
     setReportLoading(false);
   };
 
-  const getMistakeSummary = () => {
-    const map = {};
-    Object.values(qbankData).flat().forEach(e => { const k = `${e.subject}||${e.topic}`; if (!map[k]) map[k] = { subject: e.subject, topic: e.topic, wrong: 0, total: 0 }; map[k].wrong += e.wrong; map[k].total += e.total; });
-    return Object.values(map).sort((a, b) => b.wrong - a.wrong).slice(0, 10);
+  const getMistakeSummary=()=>{
+    const map={};
+    Object.values(qbankData).flat().forEach(e=>{const k=`${e.subject}||${e.topic}`;if(!map[k])map[k]={subject:e.subject,topic:e.topic,wrong:0,total:0};map[k].wrong+=e.wrong;map[k].total+=e.total;});
+    return Object.values(map).sort((a,b)=>b.wrong-a.wrong).slice(0,10);
+  };
+
+  // Save hourly popup entry
+  const savePopupEntry=()=>{
+    if(!popupInput.trim()){setShowHourlyPopup(false);return;}
+    if(popupSlot){
+      updateHourLog(popupSlot.key, popupInput.trim());
+    }
+    setShowHourlyPopup(false);
+    setPopupInput("");
   };
 
   const s = {
-    app: { minHeight: "100vh", background: "#0a0a12", color: "#e8e0f0", fontFamily: "'DM Mono','Courier New',monospace", paddingBottom: "80px" },
-    header: { background: "linear-gradient(135deg,#1a0a2e,#0d1b3e)", padding: "16px 20px 12px", borderBottom: "1px solid #2a1f4e", position: "sticky", top: 0, zIndex: 100 },
-    logo: { fontSize: "20px", fontWeight: 700, background: "linear-gradient(90deg,#a78bfa,#60a5fa,#34d399)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", display: "inline-block" },
-    sub: { fontSize: "11px", color: "#5a6880", marginTop: "2px" },
-    tabs: { display: "flex", background: "#0c0c1a", borderBottom: "1px solid #1e1e35", overflowX: "auto" },
-    tab: (a) => ({ flex: "1", minWidth: "72px", padding: "10px 6px", border: "none", cursor: "pointer", fontSize: "10px", fontFamily: "inherit", background: "transparent", color: a ? "#a78bfa" : "#3a4060", borderBottom: a ? "2px solid #a78bfa" : "2px solid transparent", transition: "all .2s", whiteSpace: "nowrap", textAlign: "center" }),
-    page: { padding: "14px" },
-    card: { background: "#0f0f1e", border: "1px solid #1c1c32", borderRadius: "12px", padding: "14px", marginBottom: "12px" },
-    lbl: { fontSize: "10px", color: "#5a6880", marginBottom: "5px", display: "block", textTransform: "uppercase", letterSpacing: "1.2px", fontWeight: 600 },
-    inp: { width: "100%", background: "#070714", border: "1px solid #252540", color: "#ddd8f0", borderRadius: "8px", padding: "9px 11px", fontSize: "13px", fontFamily: "inherit", outline: "none", boxSizing: "border-box" },
-    ta: { width: "100%", background: "#070714", border: "1px solid #252540", color: "#ddd8f0", borderRadius: "8px", padding: "9px 11px", fontSize: "12px", fontFamily: "inherit", outline: "none", resize: "vertical", boxSizing: "border-box", minHeight: "54px" },
-    sel: { width: "100%", background: "#070714", border: "1px solid #252540", color: "#ddd8f0", borderRadius: "8px", padding: "9px 11px", fontSize: "13px", fontFamily: "inherit", outline: "none" },
-    btn: (c = "purple") => ({ padding: "9px 16px", borderRadius: "8px", border: "none", cursor: "pointer", fontSize: "12px", fontFamily: "inherit", fontWeight: 700, background: c === "purple" ? "linear-gradient(135deg,#7c3aed,#4f46e5)" : c === "blue" ? "linear-gradient(135deg,#2563eb,#0891b2)" : c === "red" ? "linear-gradient(135deg,#dc2626,#9f1239)" : c === "green" ? "linear-gradient(135deg,#059669,#0d9488)" : "linear-gradient(135deg,#d97706,#b45309)", color: "#fff" }),
-    hrRow: { display: "grid", gridTemplateColumns: "58px 1fr", gap: "6px", marginBottom: "5px", alignItems: "center" },
-    hrBadge: (f) => ({ fontSize: "11px", fontWeight: 700, color: f ? "#c4b5fd" : "#2a2a45", background: f ? "#1a0a2e" : "#0a0a16", border: `1px solid ${f ? "#5b21b6" : "#1a1a30"}`, borderRadius: "6px", padding: "5px 4px", textAlign: "center" }),
-    aiBox: { background: "#05050f", border: "1px solid #201545", borderRadius: "10px", padding: "14px", marginTop: "10px", fontSize: "12px", lineHeight: "1.85", color: "#c4b5fd", whiteSpace: "pre-wrap", wordBreak: "break-word" },
-    badge: (c) => ({ display: "inline-block", padding: "2px 7px", borderRadius: "4px", fontSize: "10px", fontWeight: 700, background: c === "red" ? "#3f0a0a" : c === "green" ? "#0a2a1a" : c === "blue" ? "#0a1a3a" : "#1a1a3a", color: c === "red" ? "#f87171" : c === "green" ? "#4ade80" : c === "blue" ? "#60a5fa" : "#818cf8", border: `1px solid ${c === "red" ? "#7f1d1d" : c === "green" ? "#14532d" : c === "blue" ? "#1e3a5f" : "#312e81"}` }),
-    row: { display: "flex", gap: "8px", marginBottom: "8px" },
-    bar: (p, c = "#ef4444") => ({ height: "5px", borderRadius: "3px", background: `linear-gradient(90deg,${c} ${p}%,#1e1e35 0)`, marginTop: "3px" }),
-    grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "12px" },
+    app:{minHeight:"100vh",background:"#0a0a12",color:"#e8e0f0",fontFamily:"'DM Mono','Courier New',monospace",paddingBottom:"80px"},
+    header:{background:"linear-gradient(135deg,#1a0a2e,#0d1b3e)",padding:"14px 16px 10px",borderBottom:"1px solid #2a1f4e",position:"sticky",top:0,zIndex:100},
+    logo:{fontSize:"18px",fontWeight:700,background:"linear-gradient(90deg,#a78bfa,#60a5fa,#34d399)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",display:"inline-block"},
+    sub:{fontSize:"10px",color:"#5a6880",marginTop:"2px"},
+    tabs:{display:"flex",background:"#0c0c1a",borderBottom:"1px solid #1e1e35",overflowX:"auto"},
+    tab:(a)=>({flex:"1",minWidth:"60px",padding:"9px 4px",border:"none",cursor:"pointer",fontSize:"9px",fontFamily:"inherit",background:"transparent",color:a?"#a78bfa":"#3a4060",borderBottom:a?"2px solid #a78bfa":"2px solid transparent",transition:"all .2s",whiteSpace:"nowrap",textAlign:"center"}),
+    page:{padding:"12px"},
+    card:{background:"#0f0f1e",border:"1px solid #1c1c32",borderRadius:"12px",padding:"13px",marginBottom:"10px"},
+    lbl:{fontSize:"10px",color:"#5a6880",marginBottom:"5px",display:"block",textTransform:"uppercase",letterSpacing:"1.2px",fontWeight:600},
+    inp:{width:"100%",background:"#070714",border:"1px solid #252540",color:"#ddd8f0",borderRadius:"8px",padding:"8px 10px",fontSize:"13px",fontFamily:"inherit",outline:"none",boxSizing:"border-box"},
+    ta:{width:"100%",background:"#070714",border:"1px solid #252540",color:"#ddd8f0",borderRadius:"8px",padding:"8px 10px",fontSize:"12px",fontFamily:"inherit",outline:"none",resize:"vertical",boxSizing:"border-box",minHeight:"54px"},
+    sel:{width:"100%",background:"#070714",border:"1px solid #252540",color:"#ddd8f0",borderRadius:"8px",padding:"8px 10px",fontSize:"13px",fontFamily:"inherit",outline:"none"},
+    btn:(c="purple")=>({padding:"8px 14px",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"12px",fontFamily:"inherit",fontWeight:700,background:c==="purple"?"linear-gradient(135deg,#7c3aed,#4f46e5)":c==="blue"?"linear-gradient(135deg,#2563eb,#0891b2)":c==="red"?"linear-gradient(135deg,#dc2626,#9f1239)":c==="green"?"linear-gradient(135deg,#059669,#0d9488)":"linear-gradient(135deg,#d97706,#b45309)",color:"#fff"}),
+    slotRow:{display:"grid",gridTemplateColumns:"100px 1fr",gap:"6px",marginBottom:"5px",alignItems:"center"},
+    slotBadge:(f)=>({fontSize:"10px",fontWeight:700,color:f?"#c4b5fd":"#2a2a45",background:f?"#1a0a2e":"#0a0a16",border:`1px solid ${f?"#5b21b6":"#1a1a30"}`,borderRadius:"6px",padding:"5px 4px",textAlign:"center",letterSpacing:"0.3px"}),
+    aiBox:{background:"#05050f",border:"1px solid #201545",borderRadius:"10px",padding:"13px",marginTop:"10px",fontSize:"12px",lineHeight:"1.85",color:"#c4b5fd",whiteSpace:"pre-wrap",wordBreak:"break-word"},
+    badge:(c)=>({display:"inline-block",padding:"2px 6px",borderRadius:"4px",fontSize:"10px",fontWeight:700,background:c==="red"?"#3f0a0a":c==="green"?"#0a2a1a":c==="blue"?"#0a1a3a":"#1a1a3a",color:c==="red"?"#f87171":c==="green"?"#4ade80":c==="blue"?"#60a5fa":"#818cf8",border:`1px solid ${c==="red"?"#7f1d1d":c==="green"?"#14532d":c==="blue"?"#1e3a5f":"#312e81"}`}),
+    row:{display:"flex",gap:"8px",marginBottom:"8px"},
+    bar:(p,c="#ef4444")=>({height:"4px",borderRadius:"3px",background:`linear-gradient(90deg,${c} ${p}%,#1e1e35 0)`,marginTop:"3px"}),
+    grid2:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"10px"},
   };
 
-  const dayLog = getDayLogs(selectedDate);
-  const todayQBank = qbankData[qbankDate] || [];
-  const todayReading = readingData[rdDate] || [];
-  const todayReadPages = todayReading.reduce((a, e) => a + (e.pages||0), 0);
-  const todayVideoHours = todayReading.reduce((a, e) => a + (e.videoHours||0), 0);
-  const todayFlashcards = todayReading.reduce((a, e) => a + (e.flashcards||0), 0);
-  const todayGoalsList = getTodayGoals ? getTodayGoals() : [];
-  const mistakes = getMistakeSummary();
-  const rdStats = getReadingStats();
+  const dayLog=getDayLogs(selectedDate);
+  const todayQBank=qbankData[qbankDate]||[];
+  const todayReading=readingData[rdDate]||[];
+  const todayReadPages=todayReading.reduce((a,e)=>a+(e.pages||0),0);
+  const todayVideoHours=todayReading.reduce((a,e)=>a+(e.videoHours||0),0);
+  const todayFlashcards=todayReading.reduce((a,e)=>a+(e.flashcards||0),0);
+  const mistakes=getMistakeSummary();
+  const rdStats=getReadingStats();
 
   return (
     <div style={s.app}>
+      {/* ── HOURLY POPUP ── */}
+      {showHourlyPopup && popupSlot && (
+        <div className="notif-overlay">
+          <div className="notif-box">
+            <div className="notif-title">⏰ {popupSlot.label}</div>
+            <div className="notif-body">Is ghante mein kya kiya? Fill karo — warna bhool jaoge! 📝</div>
+            <textarea className="notif-inp" placeholder={`${popupSlot.label} – e.g. Medicine cardiology padha, 30pg`} value={popupInput} onChange={e=>setPopupInput(e.target.value)} autoFocus/>
+            <div>
+              <button className="notif-btn" onClick={savePopupEntry}>✅ Save Karo</button>
+              <button className="notif-btn skip" onClick={()=>setShowHourlyPopup(false)}>Skip</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MIDNIGHT WAKE SETUP POPUP ── */}
+      {showWakeSetup && (
+        <div className="notif-overlay">
+          <div className="notif-box">
+            <div className="notif-title">🌙 Kal ka Wake-up Time?</div>
+            <div className="notif-body">Kal kis time uthoge? Tab se hourly reminders start honge.</div>
+            <input type="time" className="notif-inp" style={{minHeight:"auto",resize:"none",padding:"10px 12px",fontSize:"16px"}} value={wakeTime} onChange={e=>{ setWakeTime(e.target.value); localStorage.setItem("wake_time",e.target.value); }}/>
+            <div>
+              <button className="notif-btn" onClick={()=>setShowWakeSetup(false)}>✅ Set Karo</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={s.header}>
         <div style={s.logo}>🩺 MedTracker Pro</div>
-        <div style={s.sub}>MBBS 19-Subject System • Daily Log + Reading + QBank + AI Reports</div>
+        <div style={s.sub}>NEET PG • 19 Subjects • Daily + Reading + QBank + AI</div>
       </div>
-      <div style={s.tabs}>{TABS.map((t, i) => <button key={i} style={s.tab(tab === i)} onClick={() => setTab(i)}>{t}</button>)}</div>
+      <div style={s.tabs}>{TABS.map((t,i)=><button key={i} style={s.tab(tab===i)} onClick={()=>setTab(i)}>{t}</button>)}</div>
 
-      {tab === 0 && <div style={s.page}>
-        <div style={s.card}><label style={s.lbl}>Date</label><input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={s.inp} /></div>
+      {/* ━━ TAB 0: DAILY LOG ━━ */}
+      {tab===0 && <div style={s.page}>
+        <div style={s.card}>
+          <label style={s.lbl}>Date</label>
+          <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} style={s.inp}/>
+        </div>
 
-        {/* Daily targets flash */}
-        {(goals[selectedDate]||[]).length > 0 && (
-          <div style={{...s.card, background:"linear-gradient(135deg,#0d1b3e,#0a1a0a)", border:"1px solid #1a2a3a", padding:"14px"}}>
-            <label style={s.lbl}>Aaj ke Targets</label>
-            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px"}}>
-              {(goals[selectedDate]||[]).map(g => {
-                const prog = getGoalProgress(g.subject, selectedDate);
-                const pct = prog?prog.pct:0;
-                const achieved = pct >= 100;
+        {/* Targets flash */}
+        {(goals[selectedDate]||[]).length>0 && (
+          <div style={{...s.card,background:"linear-gradient(135deg,#0d1b3e,#0a1a0a)",border:"1px solid #1a2a3a"}}>
+            <label style={s.lbl}>🎯 Aaj ke Targets</label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px"}}>
+              {(goals[selectedDate]||[]).map(g=>{
+                const prog=getGoalProgress(g.subject,selectedDate);
+                const pct=prog?prog.pct:0;
+                const achieved=pct>=100;
                 return (
-                  <div key={g.id} style={{background: achieved?"#0a2a0a":"#070714", border:"1px solid "+(achieved?"#22c55e":"#252540"), borderRadius:"8px", padding:"8px"}}>
-                    <div style={{fontSize:"11px",fontWeight:600,color:achieved?"#4ade80":"#c4b5fd",marginBottom:"3px"}}>{g.subject}</div>
+                  <div key={g.id} style={{background:achieved?"#0a2a0a":"#070714",border:"1px solid "+(achieved?"#22c55e":"#252540"),borderRadius:"8px",padding:"8px"}}>
+                    <div style={{fontSize:"11px",fontWeight:600,color:achieved?"#4ade80":"#c4b5fd",marginBottom:"2px"}}>{g.subject}</div>
                     {achieved
-                      ? <div style={{fontSize:"10px",color:"#4ade80",fontWeight:700}}>✅ ACHIEVED!</div>
+                      ? <div style={{fontSize:"10px",color:"#4ade80",fontWeight:700}}>✅ DONE!</div>
                       : <div>
-                          {prog&&prog.hasPages&&<div style={{fontSize:"10px",color:"#f87171"}}>📖 {prog.actualPages}/{g.targetPages} pg</div>}
-                          {prog&&prog.hasVideo&&<div style={{fontSize:"10px",color:"#60a5fa"}}>🎬 {prog.actualVideo}/{g.targetVideoHours} hr</div>}
+                          {prog&&prog.hasPages&&<div style={{fontSize:"10px",color:"#f87171"}}>📖 {prog.actualPages}/{g.targetPages}pg</div>}
+                          {prog&&prog.hasVideo&&<div style={{fontSize:"10px",color:"#60a5fa"}}>🎬 {prog.actualVideo}/{g.targetVideoHours}hr</div>}
                         </div>
                     }
-                    {prog&&prog.hasPages&&<div style={{height:"3px",borderRadius:"2px",background:"#1e1e35",marginTop:"4px",overflow:"hidden"}}>
-                      <div style={{height:"100%",width:prog.pgPct+"%",background:prog.pgPct>=100?"#22c55e":"linear-gradient(90deg,#7c3aed,#60a5fa)",borderRadius:"2px"}}/>
-                    </div>}
-                    {prog&&prog.hasVideo&&<div style={{height:"3px",borderRadius:"2px",background:"#1e1e35",marginTop:"3px",overflow:"hidden"}}>
-                      <div style={{height:"100%",width:prog.vidPct+"%",background:prog.vidPct>=100?"#22c55e":"linear-gradient(90deg,#2563eb,#06b6d4)",borderRadius:"2px"}}/>
-                    </div>}
+                    {prog&&prog.hasPages&&<div style={{height:"3px",borderRadius:"2px",background:"#1e1e35",marginTop:"4px",overflow:"hidden"}}><div style={{height:"100%",width:prog.pgPct+"%",background:prog.pgPct>=100?"#22c55e":"linear-gradient(90deg,#7c3aed,#60a5fa)",borderRadius:"2px"}}/></div>}
                   </div>
                 );
               })}
             </div>
           </div>
         )}
+
+        {/* Hourly Log */}
         <div style={s.card}>
-          <label style={s.lbl}>⏰ Hourly Log (00:00 – 23:00)</label>
-          <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
-            {HOURS.map(h => <div key={h} style={s.hrRow}><div style={s.hrBadge(!!dayLog[h]?.trim())}>{h}</div><input style={s.inp} placeholder={`${h} – kya kiya?`} value={dayLog[h] || ""} onChange={e => updateHourLog(h, e.target.value)} /></div>)}
+          <label style={s.lbl}>⏰ Hourly Log</label>
+          <div style={{maxHeight:"60vh",overflowY:"auto",paddingRight:"2px"}}>
+            {TIME_SLOTS.map(slot=>(
+              <div key={slot.key} style={s.slotRow}>
+                <div style={s.slotBadge(!!dayLog[slot.key]?.trim())}>{slot.label}</div>
+                <input style={s.inp} placeholder={`Kya kiya? e.g. Medicine padha`} value={dayLog[slot.key]||""} onChange={e=>updateHourLog(slot.key,e.target.value)}/>
+              </div>
+            ))}
           </div>
         </div>
-        {getTodayGoals().length > 0 && (
-          <div style={{...s.card,background:"linear-gradient(135deg,#0a1a0a,#0d1b3e)",border:"1px solid #1a3a2a"}}>
-            <label style={s.lbl}>Today ke Targets</label>
-            {getTodayGoals().map(g => {
-              const prog = getGoalProgress(g.subject, getToday());
-              const pct = prog?prog.pct:0;
-              return (
-                <div key={g.id} style={{marginBottom:"10px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",marginBottom:"3px"}}>
-                    <span style={{color:"#a0d8a0",fontWeight:600}}>{g.subject}</span>
+
+        {/* Target set */}
+        <div style={s.card}>
+          <label style={s.lbl}>🎯 Target Set Karo</label>
+          <div style={{marginBottom:"8px"}}>
+            <label style={s.lbl}>Date</label>
+            <input type="date" value={goalDate} onChange={e=>setGoalDate(e.target.value)} style={s.inp}/>
+          </div>
+          <div style={{marginBottom:"8px"}}>
+            <label style={s.lbl}>Subject</label>
+            <select value={goalSubject} onChange={e=>setGoalSubject(e.target.value)} style={s.sel}>
+              {SUBJECTS.map(sub=><option key={sub}>{sub}</option>)}
+            </select>
+          </div>
+          <div style={s.row}>
+            <div style={{flex:1}}><label style={s.lbl}>📖 Pages</label><input type="number" min="0" placeholder="20" value={goalPages} onChange={e=>setGoalPages(e.target.value)} style={s.inp}/></div>
+            <div style={{flex:1}}><label style={s.lbl}>🎬 Video (hrs)</label><input type="number" min="0" step="0.5" placeholder="2" value={goalVideoHours} onChange={e=>setGoalVideoHours(e.target.value)} style={s.inp}/></div>
+          </div>
+          <button style={s.btn("green")} onClick={saveGoal}>💾 Save Target</button>
+          {getTodayGoals().length>0 && (
+            <div style={{marginTop:"10px"}}>
+              {getTodayGoals().map(g=>{
+                const prog=getGoalProgress(g.subject,getToday());
+                const pct=prog?prog.pct:0;
+                return (
+                  <div key={g.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid #111124",fontSize:"12px"}}>
+                    <span style={{color:"#a0d8a0"}}>{g.subject}</span>
                     <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
-                      <span style={{color:pct>=100?"#4ade80":pct>=50?"#fbbf24":"#f87171",fontSize:"11px"}}>{pct}%</span>
-                      <span style={s.badge(pct>=100?"green":pct>=50?"blue":"red")}>{pct>=100?"✓":"pending"}</span>
-                      <button onClick={()=>deleteGoal(getToday(),g.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#5a2a2a",fontSize:"12px"}}>X</button>
+                      <span style={{color:pct>=100?"#4ade80":pct>=50?"#fbbf24":"#f87171"}}>{pct}%</span>
+                      <button onClick={()=>deleteGoal(getToday(),g.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#5a2a2a",fontSize:"14px"}}>✕</button>
                     </div>
                   </div>
-                  {prog&&prog.hasPages&&(
-                    <div style={{marginBottom:"3px"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:"#4a5a70",marginBottom:"2px"}}>
-                        <span>📖 Pages</span>
-                        <span style={{color:prog.pgPct>=100?"#4ade80":prog.pgPct>=50?"#fbbf24":"#f87171"}}>{prog.actualPages}/{g.targetPages} pg</span>
-                      </div>
-                      <div style={{height:"5px",borderRadius:"3px",background:"#1e1e35",overflow:"hidden"}}>
-                        <div style={{height:"100%",width:prog.pgPct+"%",background:prog.pgPct>=100?"linear-gradient(90deg,#22c55e,#16a34a)":prog.pgPct>=50?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#ef4444,#dc2626)",transition:"width 0.3s",borderRadius:"3px"}}/>
-                      </div>
-                    </div>
-                  )}
-                  {prog&&prog.hasVideo&&(
-                    <div>
-                      <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:"#4a5a70",marginBottom:"2px"}}>
-                        <span>🎬 Video</span>
-                        <span style={{color:prog.vidPct>=100?"#4ade80":prog.vidPct>=50?"#60a5fa":"#f87171"}}>{prog.actualVideo}/{g.targetVideoHours} hrs</span>
-                      </div>
-                      <div style={{height:"5px",borderRadius:"3px",background:"#1e1e35",overflow:"hidden"}}>
-                        <div style={{height:"100%",width:prog.vidPct+"%",background:prog.vidPct>=100?"linear-gradient(90deg,#22c55e,#16a34a)":prog.vidPct>=50?"linear-gradient(90deg,#2563eb,#0891b2)":"linear-gradient(90deg,#7c3aed,#4f46e5)",transition:"width 0.3s",borderRadius:"3px"}}/>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div style={s.card}>
-          <label style={s.lbl}>Target Set Karo</label>
-          <div style={{...s.row,marginBottom:"8px"}}>
-            <div style={{flex:1}}><label style={s.lbl}>Date</label><input type="date" value={goalDate} onChange={e=>setGoalDate(e.target.value)} style={s.inp}/></div>
-          </div>
-          <div style={{marginBottom:"8px"}}><label style={s.lbl}>Subject</label><select value={goalSubject} onChange={e=>setGoalSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub=><option key={sub}>{sub}</option>)}</select></div>
-          <div style={s.row}>
-            <div style={{flex:1}}><label style={s.lbl}>📖 Page Target</label><input type="number" min="0" max="200" placeholder="e.g. 20" value={goalPages} onChange={e=>setGoalPages(e.target.value)} style={s.inp}/></div>
-            <div style={{flex:1}}><label style={s.lbl}>🎬 Video Target (hrs)</label><input type="number" min="0" step="0.5" placeholder="e.g. 2" value={goalVideoHours} onChange={e=>setGoalVideoHours(e.target.value)} style={s.inp}/></div>
-          </div>
-          <button style={s.btn("green")} onClick={saveGoal}>Save Target</button>
-          {aiGoalSuggestion && <div style={s.aiBox}>{aiGoalSuggestion}</div>}
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        <div style={{ textAlign: "center", marginBottom: "10px" }}>
-          <button style={{ ...s.btn("purple"), padding: "12px 28px", fontSize: "13px" }} onClick={analyseDay} disabled={aiLoading}>{aiLoading ? "Analysing..." : "AI se Aaj ka Analysis Lo"}</button>
-        </div>
-        {aiAnalysis && <div style={s.aiBox}><div style={{ fontSize: "9px", color: "#5a3f8a", marginBottom: "8px" }}>🤖 AI ANALYSIS • {selectedDate}</div>{aiAnalysis}</div>}
-
-        <div style={{ textAlign: "center", marginBottom: "10px", marginTop: "6px" }}>
-          <button style={{ ...s.btn("green"), padding: "14px 28px", fontSize: "14px", fontWeight: 700, letterSpacing: "0.5px" }} onClick={analyseFullDay} disabled={fullLoading}>
-            {fullLoading ? "⏳ Full Report Ban Raha Hai..." : "🔥 POORA DIN KA FULL REPORT"}
+        {/* FULL DAY REPORT BUTTON */}
+        <div style={{textAlign:"center",marginBottom:"10px"}}>
+          <button style={{...s.btn("green"),padding:"14px 28px",fontSize:"14px",fontWeight:700,letterSpacing:"0.5px",width:"100%"}} onClick={analyseFullDay} disabled={fullLoading}>
+            {fullLoading?"⏳ Report Ban Raha Hai...":"🔥 FULL DAY AI REPORT"}
           </button>
-          <div style={{fontSize:"10px",color:"#3a5a3a",marginTop:"4px"}}>Daily Log + Reading + QBank — sab ek saath</div>
+          <div style={{fontSize:"10px",color:"#3a5a3a",marginTop:"4px"}}>Hourly log + Reading + QBank + Targets — sab ek saath</div>
         </div>
+
         {fullAnalysis && (
-          <div style={{...s.aiBox, border:"1px solid #1a3a1a", background:"linear-gradient(135deg,#050f05,#05050f)"}}>
-            <div style={{ fontSize: "9px", color: "#3a8a3a", marginBottom: "8px", letterSpacing:"1px" }}>📋 FULL DAY REPORT • {selectedDate}</div>
-            <div style={{whiteSpace:"pre-wrap"}}>{fullAnalysis}</div>
+          <div style={{...s.card,border:"1px solid #1a3a1a",background:"linear-gradient(135deg,#050f05,#05050f)"}}>
+            <div style={{fontSize:"9px",color:"#3a8a3a",marginBottom:"8px",letterSpacing:"1px"}}>📋 FULL DAY REPORT • {selectedDate}</div>
+            <div style={s.aiBox}>{fullAnalysis}</div>
+
+            {/* ── AI CHAT ── */}
+            <div style={{marginTop:"14px",borderTop:"1px solid #1a3a1a",paddingTop:"12px"}}>
+              <label style={{...s.lbl,color:"#60a5fa"}}>💬 AI Coach se Baat Karo</label>
+              <div style={{maxHeight:"300px",overflowY:"auto",marginBottom:"10px",padding:"4px 0"}}>
+                {chatMessages.filter(m=>m.role!=="system_context").map((m,i)=>(
+                  <div key={i} className={`chat-msg ${m.role}`}>{m.content}</div>
+                ))}
+                {chatLoading && <div className="chat-typing">Coach soch raha hai...</div>}
+                <div ref={chatEndRef}/>
+              </div>
+              {chatMessages.filter(m=>m.role!=="system_context").length===0 && (
+                <div style={{fontSize:"11px",color:"#3a4a60",marginBottom:"8px",fontStyle:"italic"}}>
+                  Report ke baad yahan freely baat karo — mistakes poocho, tips lo, plan banao...
+                </div>
+              )}
+              <div style={{display:"flex",gap:"6px"}}>
+                <input
+                  style={{...s.inp,flex:1}}
+                  placeholder="Kuch bhi poocho..."
+                  value={chatInput}
+                  onChange={e=>setChatInput(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&sendChat()}
+                />
+                <button style={{...s.btn("blue"),whiteSpace:"nowrap"}} onClick={sendChat} disabled={chatLoading}>Send ↗</button>
+              </div>
+            </div>
           </div>
         )}
       </div>}
 
-      {tab === 1 && <div style={s.page}>
-        <div style={{...s.card, background:"linear-gradient(135deg,#0d1f0d,#0a1a2e)", border:"1px solid #1a3a1a", padding:"16px"}}>
-          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"8px", textAlign:"center"}}>
-            <div>
-              <div style={{fontSize:"11px",color:"#5a8a5a",letterSpacing:"1px",marginBottom:"4px"}}>PAGES</div>
-              <div style={{fontSize:"40px",fontWeight:700,color:"#4ade80",lineHeight:1}}>{todayReadPages}</div>
-            </div>
-            <div>
-              <div style={{fontSize:"11px",color:"#5a6a8a",letterSpacing:"1px",marginBottom:"4px"}}>VIDEO HRS</div>
-              <div style={{fontSize:"40px",fontWeight:700,color:"#60a5fa",lineHeight:1}}>{todayVideoHours}</div>
-            </div>
-            <div>
-              <div style={{fontSize:"11px",color:"#8a5a6a",letterSpacing:"1px",marginBottom:"4px"}}>FLASHCARDS</div>
-              <div style={{fontSize:"40px",fontWeight:700,color:"#f472b6",lineHeight:1}}>{todayFlashcards}</div>
-            </div>
+      {/* ━━ TAB 1: READING ━━ */}
+      {tab===1 && <div style={s.page}>
+        <div style={{...s.card,background:"linear-gradient(135deg,#0d1f0d,#0a1a2e)",border:"1px solid #1a3a1a",padding:"14px"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",textAlign:"center"}}>
+            <div><div style={{fontSize:"10px",color:"#5a8a5a",marginBottom:"4px"}}>PAGES</div><div style={{fontSize:"36px",fontWeight:700,color:"#4ade80",lineHeight:1}}>{todayReadPages}</div></div>
+            <div><div style={{fontSize:"10px",color:"#5a6a8a",marginBottom:"4px"}}>VIDEO HRS</div><div style={{fontSize:"36px",fontWeight:700,color:"#60a5fa",lineHeight:1}}>{todayVideoHours}</div></div>
+            <div><div style={{fontSize:"10px",color:"#8a5a6a",marginBottom:"4px"}}>FLASHCARDS</div><div style={{fontSize:"36px",fontWeight:700,color:"#f472b6",lineHeight:1}}>{todayFlashcards}</div></div>
           </div>
-          <div style={{fontSize:"11px",color:"#3a4a50",marginTop:"8px",textAlign:"center"}}>{todayReading.length} sessions - {rdDate}</div>
+          <div style={{fontSize:"10px",color:"#3a4a50",marginTop:"6px",textAlign:"center"}}>{todayReading.length} sessions – {rdDate}</div>
         </div>
 
         <div style={s.card}>
-          <label style={s.lbl}>Subject Reading Count - Kitni Baar Padha</label>
-          <p style={{fontSize:"11px",color:"#5a6880",marginBottom:"10px",lineHeight:"1.5"}}>Har subject ki 1st, 2nd, 3rd... reading track karo.</p>
+          <label style={s.lbl}>Reading Count – Kitni Baar Padha</label>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px"}}>
-            {SUBJECTS.map(subj => {
-              const count = readCounts[subj]||0;
-              const color = count===0?"#2a2a45":count===1?"#7c3aed":count===2?"#2563eb":count===3?"#059669":"#d97706";
-              const label = count===0?"Not started":count===1?"1st reading":count===2?"2nd reading":count===3?"3rd reading":count+"th reading";
+            {SUBJECTS.map(subj=>{
+              const count=readCounts[subj]||0;
+              const color=count===0?"#2a2a45":count===1?"#7c3aed":count===2?"#2563eb":count===3?"#059669":"#d97706";
+              const label=count===0?"Not started":count===1?"1st reading":count===2?"2nd reading":count===3?"3rd reading":count+"th reading";
               return (
                 <div key={subj} style={{background:"#070714",border:"1px solid "+(count>0?color+"55":"#1c1c32"),borderRadius:"10px",padding:"10px"}}>
-                  <div style={{fontSize:"11px",fontWeight:600,color:count>0?"#e8e0f0":"#3a3a5a",marginBottom:"4px"}}>{subj}</div>
+                  <div style={{fontSize:"11px",fontWeight:600,color:count>0?"#e8e0f0":"#3a3a5a",marginBottom:"3px"}}>{subj}</div>
                   <div style={{fontSize:"10px",color:count>0?color:"#2a2a45",marginBottom:"6px"}}>{label}</div>
                   <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
                     <button onClick={()=>decrementReadCount(subj)} style={{width:"28px",height:"28px",borderRadius:"6px",border:"1px solid #2a2a45",background:"#0a0a18",color:"#f87171",cursor:"pointer",fontSize:"16px"}}>-</button>
@@ -579,257 +686,232 @@ Max 35 lines. Hindi/English mix. Be direct aur honest.`;
             })}
           </div>
         </div>
+
         <div style={s.card}>
           <label style={s.lbl}>Session Add Karo</label>
           <div style={{marginBottom:"8px"}}><label style={s.lbl}>Date</label><input type="date" value={rdDate} onChange={e=>setRdDate(e.target.value)} style={s.inp}/></div>
           <div style={{marginBottom:"8px"}}><label style={s.lbl}>Subject</label><select value={rdSubject} onChange={e=>setRdSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub=><option key={sub}>{sub}</option>)}</select></div>
           <div style={s.row}>
-            <div style={{flex:1}}><label style={s.lbl}>Pages Read</label><input type="number" min="0" placeholder="20" value={rdPages} onChange={e=>setRdPages(e.target.value)} style={s.inp}/></div>
+            <div style={{flex:1}}><label style={s.lbl}>Pages</label><input type="number" min="0" placeholder="20" value={rdPages} onChange={e=>setRdPages(e.target.value)} style={s.inp}/></div>
             <div style={{flex:1}}><label style={s.lbl}>From Page</label><input type="number" min="0" placeholder="45" value={rdFromPage} onChange={e=>setRdFromPage(e.target.value)} style={s.inp}/></div>
             <div style={{flex:1}}><label style={s.lbl}>To Page</label><input type="number" min="0" placeholder="65" value={rdToPage} onChange={e=>setRdToPage(e.target.value)} style={s.inp}/></div>
           </div>
           <div style={s.row}>
-            <div style={{flex:1}}><label style={s.lbl}>Video Hours</label><input type="number" min="0" step="0.5" placeholder="1.5" value={rdVideoHours} onChange={e=>setRdVideoHours(e.target.value)} style={s.inp}/></div>
+            <div style={{flex:1}}><label style={s.lbl}>Video (hrs)</label><input type="number" min="0" step="0.5" placeholder="1.5" value={rdVideoHours} onChange={e=>setRdVideoHours(e.target.value)} style={s.inp}/></div>
             <div style={{flex:1}}><label style={s.lbl}>Flashcards</label><input type="number" min="0" placeholder="30" value={rdFlashcards} onChange={e=>setRdFlashcards(e.target.value)} style={s.inp}/></div>
           </div>
-          <button style={s.btn("green")} onClick={addReadingEntry}>Session Save Karo</button>
+          <button style={s.btn("green")} onClick={addReadingEntry}>✅ Session Save Karo</button>
         </div>
-        {todayReading.length > 0 && <div style={s.card}>
+
+        {todayReading.length>0 && <div style={s.card}>
           <label style={s.lbl}>📋 {rdDate} ke Sessions</label>
-          {todayReading.map(e => <div key={e.id} style={{ borderBottom: "1px solid #151525", padding: "9px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "13px", fontWeight: 600, color: "#4ade80" }}>{e.subject}</span>
-              <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
-                {(e.pages||0)>0 && <span style={s.badge("green")}>{e.pages}pg</span>}
-                {(e.videoHours||0)>0 && <span style={s.badge("blue")}>{e.videoHours}hr vid</span>}
-                {(e.flashcards||0)>0 && <span style={{...s.badge("blue"),background:"#2a0a2a",color:"#f472b6",border:"1px solid #7a1a5a"}}>{e.flashcards} FC</span>}
-                <button onClick={() => deleteReadingEntry(rdDate, e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#5a2a2a", fontSize: "14px" }}>X</button>
+          {todayReading.map(e=><div key={e.id} style={{borderBottom:"1px solid #151525",padding:"8px 0"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:"13px",fontWeight:600,color:"#4ade80"}}>{e.subject}</span>
+              <div style={{display:"flex",gap:"5px",alignItems:"center"}}>
+                {(e.pages||0)>0&&<span style={s.badge("green")}>{e.pages}pg</span>}
+                {(e.videoHours||0)>0&&<span style={s.badge("blue")}>{e.videoHours}hr</span>}
+                {(e.flashcards||0)>0&&<span style={{...s.badge("blue"),background:"#2a0a2a",color:"#f472b6",border:"1px solid #7a1a5a"}}>{e.flashcards}FC</span>}
+                <button onClick={()=>deleteReadingEntry(rdDate,e.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#5a2a2a",fontSize:"14px"}}>✕</button>
               </div>
             </div>
-            {(e.fromPage && e.toPage) && <div style={{fontSize:"11px",color:"#4a5a70",marginTop:"3px"}}>p.{e.fromPage} – p.{e.toPage}</div>}
+            {(e.fromPage&&e.toPage)&&<div style={{fontSize:"11px",color:"#4a5a70",marginTop:"2px"}}>p.{e.fromPage} – p.{e.toPage}</div>}
           </div>)}
         </div>}
-        {rdStats.totalPages > 0 && <div style={s.card}>
-          <label style={s.lbl}>📊 Subject-wise Stats (All Time)</label>
+
+        {rdStats.totalPages>0 && <div style={s.card}>
+          <label style={s.lbl}>📊 All Time Stats</label>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"6px",marginBottom:"10px"}}>
-            <div style={{background:"#070714",border:"1px solid #1a2a1a",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
-              <div style={{fontSize:"24px",fontWeight:700,color:"#4ade80"}}>{rdStats.totalPages}</div>
-              <div style={{fontSize:"9px",color:"#3a6a3a"}}>Total Pages</div>
-            </div>
-            <div style={{background:"#070714",border:"1px solid #1a2a3a",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
-              <div style={{fontSize:"24px",fontWeight:700,color:"#60a5fa"}}>{rdStats.totalVideoHours||0}</div>
-              <div style={{fontSize:"9px",color:"#3a4a6a"}}>Video Hours</div>
-            </div>
-            <div style={{background:"#070714",border:"1px solid #2a1a2a",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
-              <div style={{fontSize:"24px",fontWeight:700,color:"#f472b6"}}>{rdStats.totalFlashcards||0}</div>
-              <div style={{fontSize:"9px",color:"#6a3a5a"}}>Flashcards</div>
-            </div>
+            <div style={{background:"#070714",border:"1px solid #1a2a1a",borderRadius:"8px",padding:"10px",textAlign:"center"}}><div style={{fontSize:"22px",fontWeight:700,color:"#4ade80"}}>{rdStats.totalPages}</div><div style={{fontSize:"9px",color:"#3a6a3a"}}>Pages</div></div>
+            <div style={{background:"#070714",border:"1px solid #1a2a3a",borderRadius:"8px",padding:"10px",textAlign:"center"}}><div style={{fontSize:"22px",fontWeight:700,color:"#60a5fa"}}>{rdStats.totalVideoHours||0}</div><div style={{fontSize:"9px",color:"#3a4a6a"}}>Video Hrs</div></div>
+            <div style={{background:"#070714",border:"1px solid #2a1a2a",borderRadius:"8px",padding:"10px",textAlign:"center"}}><div style={{fontSize:"22px",fontWeight:700,color:"#f472b6"}}>{rdStats.totalFlashcards||0}</div><div style={{fontSize:"9px",color:"#6a3a5a"}}>Flashcards</div></div>
           </div>
-          {Object.entries(rdStats.bySubject).sort((a, b) => b[1].pages - a[1].pages).map(([subj, data]) => {
-            const maxPg = Math.max(...Object.values(rdStats.bySubject).map(d => d.pages), 1);
-            return <div key={subj} style={{ marginBottom: "10px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "2px" }}>
-                <span style={{ color: "#a0d8a0" }}>{subj}</span>
-                <div style={{ display: "flex", gap: "4px", flexWrap:"wrap" }}>
+          {Object.entries(rdStats.bySubject).sort((a,b)=>b[1].pages-a[1].pages).map(([subj,data])=>{
+            const maxPg=Math.max(...Object.values(rdStats.bySubject).map(d=>d.pages),1);
+            return <div key={subj} style={{marginBottom:"8px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",marginBottom:"2px"}}>
+                <span style={{color:"#a0d8a0"}}>{subj}</span>
+                <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
                   {(data.pages||0)>0&&<span style={s.badge("green")}>{data.pages}pg</span>}
                   {(data.videoHours||0)>0&&<span style={s.badge("blue")}>{data.videoHours}hr</span>}
-                  {(data.flashcards||0)>0&&<span style={{...s.badge("blue"),background:"#2a0a2a",color:"#f472b6",border:"1px solid #7a1a5a"}}>{data.flashcards}FC</span>}
                   <span style={s.badge("blue")}>{data.sessions}x</span>
                 </div>
               </div>
-              <div style={s.bar(Math.round((data.pages||0) / maxPg * 100), "#22c55e")} />
+              <div style={s.bar(Math.round((data.pages||0)/maxPg*100),"#22c55e")}/>
             </div>;
           })}
         </div>}
       </div>}
 
-      {tab === 2 && <div style={s.page}>
+      {/* ━━ TAB 2: QBANK ━━ */}
+      {tab===2 && <div style={s.page}>
         <div style={s.card}>
           <label style={s.lbl}>➕ QBank Entry</label>
-          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Date</label><input type="date" value={qbankDate} onChange={e => setQbankDate(e.target.value)} style={s.inp} /></div>
-          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Subject</label><select value={qbankSubject} onChange={e => setQbankSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub => <option key={sub}>{sub}</option>)}</select></div>
-          <div style={{ marginBottom: "8px" }}><label style={s.lbl}>Topic</label><input placeholder="e.g. Brachial Plexus..." value={qbankTopic} onChange={e => setQbankTopic(e.target.value)} style={s.inp} /></div>
+          <div style={{marginBottom:"8px"}}><label style={s.lbl}>Date</label><input type="date" value={qbankDate} onChange={e=>setQbankDate(e.target.value)} style={s.inp}/></div>
+          <div style={{marginBottom:"8px"}}><label style={s.lbl}>Subject</label><select value={qbankSubject} onChange={e=>setQbankSubject(e.target.value)} style={s.sel}>{SUBJECTS.map(sub=><option key={sub}>{sub}</option>)}</select></div>
+          <div style={{marginBottom:"8px"}}><label style={s.lbl}>Topic</label><input placeholder="e.g. Brachial Plexus" value={qbankTopic} onChange={e=>setQbankTopic(e.target.value)} style={s.inp}/></div>
           <div style={s.row}>
-            <div style={{ flex: 1 }}><label style={s.lbl}>Total Qs</label><input type="number" min="0" placeholder="50" value={qTotal} onChange={e => setQTotal(e.target.value)} style={s.inp} /></div>
-            <div style={{ flex: 1 }}><label style={s.lbl}>Wrong</label><input type="number" min="0" placeholder="12" value={qWrong} onChange={e => setQWrong(e.target.value)} style={s.inp} /></div>
+            <div style={{flex:1}}><label style={s.lbl}>Total Qs</label><input type="number" min="0" placeholder="50" value={qTotal} onChange={e=>setQTotal(e.target.value)} style={s.inp}/></div>
+            <div style={{flex:1}}><label style={s.lbl}>Wrong</label><input type="number" min="0" placeholder="12" value={qWrong} onChange={e=>setQWrong(e.target.value)} style={s.inp}/></div>
           </div>
-          <div style={{ marginBottom: "10px" }}><label style={s.lbl}>Notes</label><textarea placeholder="Weak concept?" value={qNotes} onChange={e => setQNotes(e.target.value)} style={s.ta} /></div>
+          <div style={{marginBottom:"10px"}}><label style={s.lbl}>Notes</label><textarea placeholder="Weak concept?" value={qNotes} onChange={e=>setQNotes(e.target.value)} style={s.ta}/></div>
           <button style={s.btn("blue")} onClick={addQBankEntry}>✅ Save Karo</button>
         </div>
+
         <div style={s.card}>
-          <label style={s.lbl}>📸 Wrong Screenshots → AI Analysis</label>
-          <p style={{ fontSize: "11px", color: "#5a6880", marginBottom: "10px", lineHeight: "1.6" }}>Galat answers ke SS upload karo – AI analyse karega</p>
-          <input type="file" ref={fileRef} multiple accept="image/*" style={{ display: "none" }} onChange={e => analyseScreenshots(e.target.files)} />
-          <button style={s.btn("green")} onClick={() => fileRef.current.click()} disabled={ssLoading}>{ssLoading ? "🔄 AI Analyse Kar Raha Hai..." : "📤 Screenshots Upload Karo"}</button>
-          {screenshotAnalysis && <div style={s.aiBox}><div style={{ fontSize: "9px", color: "#3a5a3a", marginBottom: "8px" }}>🔍 SCREENSHOT ANALYSIS</div>{screenshotAnalysis}</div>}
+          <label style={s.lbl}>📸 Screenshots → AI Analysis</label>
+          <p style={{fontSize:"11px",color:"#5a6880",marginBottom:"10px",lineHeight:"1.6"}}>Galat answers ke screenshots upload karo – AI analyse karega</p>
+          <input type="file" ref={fileRef} multiple accept="image/*" style={{display:"none"}} onChange={e=>analyseScreenshots(e.target.files)}/>
+          <button style={s.btn("green")} onClick={()=>fileRef.current.click()} disabled={ssLoading}>{ssLoading?"🔄 Analyse Ho Raha Hai...":"📤 Screenshots Upload"}</button>
+          {screenshotAnalysis&&<div style={s.aiBox}><div style={{fontSize:"9px",color:"#3a5a3a",marginBottom:"6px"}}>🔍 SCREENSHOT ANALYSIS</div>{screenshotAnalysis}</div>}
         </div>
-        {todayQBank.length > 0 && <div style={s.card}>
+
+        {todayQBank.length>0&&<div style={s.card}>
           <label style={s.lbl}>📋 {qbankDate} Entries</label>
-          {todayQBank.map(e => <div key={e.id} style={{ borderBottom: "1px solid #151525", padding: "8px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "13px", fontWeight: 600, color: "#c4b5fd" }}>{e.subject}</span>
-              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}><span style={s.badge(e.total > 0 && e.wrong / e.total > 0.5 ? "red" : "green")}>{e.wrong}/{e.total} wrong</span><button onClick={() => deleteQBankEntry(qbankDate, e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#5a2a2a", fontSize: "14px" }}>✕</button></div>
+          {todayQBank.map(e=><div key={e.id} style={{borderBottom:"1px solid #151525",padding:"7px 0"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:"12px",fontWeight:600,color:"#c4b5fd"}}>{e.subject}</span>
+              <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
+                <span style={s.badge(e.total>0&&e.wrong/e.total>0.5?"red":"green")}>{e.wrong}/{e.total}W</span>
+                <button onClick={()=>deleteQBankEntry(qbankDate,e.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#5a2a2a",fontSize:"14px"}}>✕</button>
+              </div>
             </div>
-            <div style={{ fontSize: "12px", color: "#7a8aa8", marginTop: "2px" }}>{e.topic}</div>
-            {e.total > 0 && <div style={s.bar(Math.min(100, e.wrong / e.total * 100))} />}
+            <div style={{fontSize:"11px",color:"#7a8aa8",marginTop:"2px"}}>{e.topic}</div>
+            {e.total>0&&<div style={s.bar(Math.min(100,e.wrong/e.total*100))}/>}
           </div>)}
         </div>}
-        {mistakes.length > 0 && <div style={s.card}>
-          <label style={s.lbl}>🔴 Top Weak Topics – All Time</label>
-          {mistakes.map((m, i) => <div key={i} style={{ marginBottom: "10px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}><span style={{ color: "#c4b5fd", flex: 1 }}>{m.subject} <span style={{ color: "#6a7a98" }}>→ {m.topic}</span></span><span style={s.badge("red")}>{m.wrong}W</span></div>
-            <div style={s.bar(Math.min(100, m.total > 0 ? m.wrong / m.total * 100 : 100))} />
+
+        {mistakes.length>0&&<div style={s.card}>
+          <label style={s.lbl}>🔴 Top Weak Topics (All Time)</label>
+          {mistakes.map((m,i)=><div key={i} style={{marginBottom:"8px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px"}}>
+              <span style={{color:"#c4b5fd",flex:1}}>{m.subject} <span style={{color:"#6a7a98"}}>→ {m.topic}</span></span>
+              <span style={s.badge("red")}>{m.wrong}W</span>
+            </div>
+            <div style={s.bar(Math.min(100,m.total>0?m.wrong/m.total*100:100))}/>
           </div>)}
         </div>}
       </div>}
 
-      {tab === 3 && <div style={s.page}>
+      {/* ━━ TAB 3: REPORTS ━━ */}
+      {tab===3 && <div style={s.page}>
         <div style={s.grid2}>
           {[
-            {l:"Study Days", v:Object.keys(logs).length, col:"#a78bfa"},
-            {l:"Total Pages", v:rdStats.totalPages, col:"#4ade80"},
-            {l:"Video Hours", v:rdStats.totalVideoHours, col:"#60a5fa"},
-            {l:"Flashcards", v:rdStats.totalFlashcards, col:"#f472b6"},
-            {l:"QBank Qs", v:Object.values(qbankData).flat().reduce((a,e)=>a+e.total,0), col:"#fbbf24"},
-            {l:"Wrong Qs", v:Object.values(qbankData).flat().reduce((a,e)=>a+e.wrong,0), col:"#f87171"},
-          ].map((x,i) => (
-            <div key={i} style={{...s.card, textAlign:"center", padding:"12px", marginBottom:0}}>
+            {l:"Study Days",v:Object.keys(logs).length,col:"#a78bfa"},
+            {l:"Total Pages",v:rdStats.totalPages,col:"#4ade80"},
+            {l:"Video Hrs",v:rdStats.totalVideoHours,col:"#60a5fa"},
+            {l:"Flashcards",v:rdStats.totalFlashcards,col:"#f472b6"},
+            {l:"QBank Qs",v:Object.values(qbankData).flat().reduce((a,e)=>a+e.total,0),col:"#fbbf24"},
+            {l:"Wrong Qs",v:Object.values(qbankData).flat().reduce((a,e)=>a+e.wrong,0),col:"#f87171"},
+          ].map((x,i)=>(
+            <div key={i} style={{...s.card,textAlign:"center",padding:"12px",marginBottom:0}}>
               <div style={{fontSize:"20px",fontWeight:700,color:x.col,margin:"2px 0"}}>{x.v}</div>
               <div style={{fontSize:"10px",color:"#3a4a60"}}>{x.l}</div>
             </div>
           ))}
         </div>
 
-        {/* Graph section */}
+        {/* 7-day graph */}
         {(()=>{
-          const last7 = [...Array(7)].map((_,i)=>{
-            const d = new Date(); d.setDate(d.getDate()-6+i);
-            const key = d.toISOString().split("T")[0];
-            const rd = readingData[key]||[];
-            const qb = qbankData[key]||[];
-            return {
-              day: d.toLocaleDateString("en",{weekday:"short"}),
-              pages: rd.reduce((a,e)=>a+(e.pages||0),0),
-              videoHrs: rd.reduce((a,e)=>a+(e.videoHours||0),0),
-              flashcards: rd.reduce((a,e)=>a+(e.flashcards||0),0),
-              qTotal: qb.reduce((a,e)=>a+e.total,0),
-              qWrong: qb.reduce((a,e)=>a+e.wrong,0),
-              activeHours: Object.values(logs[key]||{}).filter(Boolean).length,
-              hasTarget: (goals[key]||[]).length>0,
-              targetMet: (goals[key]||[]).every(g=>{
-                const actual=(readingData[key]||[]).filter(e=>e.subject===g.subject).reduce((a,e)=>a+(e.pages||0),0);
-                return actual>=g.targetPages;
-              })
-            };
+          const last7=[...Array(7)].map((_,i)=>{
+            const d=new Date();d.setDate(d.getDate()-6+i);
+            const key=d.toISOString().split("T")[0];
+            const rd=readingData[key]||[], qb=qbankData[key]||[];
+            return {day:d.toLocaleDateString("en",{weekday:"short"}),pages:rd.reduce((a,e)=>a+(e.pages||0),0),qTotal:qb.reduce((a,e)=>a+e.total,0),activeHours:Object.values(logs[key]||{}).filter(Boolean).length,hasTarget:(goals[key]||[]).length>0,targetMet:(goals[key]||[]).every(g=>{const actual=(readingData[key]||[]).filter(e=>e.subject===g.subject).reduce((a,e)=>a+(e.pages||0),0);return actual>=g.targetPages;})};
           });
-          const maxPages = Math.max(...last7.map(d=>d.pages), 1);
-          const maxQs = Math.max(...last7.map(d=>d.qTotal), 1);
+          const maxPg=Math.max(...last7.map(d=>d.pages),1), maxQs=Math.max(...last7.map(d=>d.qTotal),1);
           return (
             <div style={s.card}>
-              <label style={s.lbl}>Last 7 Days - Visual</label>
-              <div style={{marginBottom:"16px"}}>
-                <div style={{fontSize:"10px",color:"#5a6880",marginBottom:"6px"}}>PAGES READ (green) + QBANK Qs (purple)</div>
-                <div style={{display:"flex",gap:"4px",alignItems:"flex-end",height:"80px"}}>
-                  {last7.map((d,i)=>(
-                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:"2px",height:"100%",justifyContent:"flex-end"}}>
-                      <div style={{width:"100%",display:"flex",gap:"1px",alignItems:"flex-end",height:"65px"}}>
-                        <div style={{flex:1,background:"#22c55e",borderRadius:"2px 2px 0 0",height:Math.max(4,Math.round(d.pages/maxPages*65))+"px",opacity:0.9}}/>
-                        <div style={{flex:1,background:"#7c3aed",borderRadius:"2px 2px 0 0",height:Math.max(d.qTotal>0?4:0,Math.round(d.qTotal/maxQs*65))+"px",opacity:0.9}}/>
-                      </div>
-                      <div style={{fontSize:"8px",color:d.targetMet&&d.hasTarget?"#4ade80":"#3a4a60",textAlign:"center"}}>{d.day}</div>
-                      {d.hasTarget&&<div style={{fontSize:"7px",color:d.targetMet?"#4ade80":"#f87171"}}>{d.targetMet?"✓":"○"}</div>}
+              <label style={s.lbl}>Last 7 Days</label>
+              <div style={{fontSize:"10px",color:"#5a6880",marginBottom:"6px"}}>🟢 Pages  🟣 QBank Qs</div>
+              <div style={{display:"flex",gap:"4px",alignItems:"flex-end",height:"80px",marginBottom:"12px"}}>
+                {last7.map((d,i)=>(
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:"2px",height:"100%",justifyContent:"flex-end"}}>
+                    <div style={{width:"100%",display:"flex",gap:"1px",alignItems:"flex-end",height:"65px"}}>
+                      <div style={{flex:1,background:"#22c55e",borderRadius:"2px 2px 0 0",height:Math.max(4,Math.round(d.pages/maxPg*65))+"px",opacity:0.9}}/>
+                      <div style={{flex:1,background:"#7c3aed",borderRadius:"2px 2px 0 0",height:Math.max(d.qTotal>0?4:0,Math.round(d.qTotal/maxQs*65))+"px",opacity:0.9}}/>
                     </div>
-                  ))}
-                </div>
-              </div>
-              <div style={{marginBottom:"8px"}}>
-                <div style={{fontSize:"10px",color:"#5a6880",marginBottom:"6px"}}>ACTIVE STUDY HOURS per day</div>
-                <div style={{display:"flex",gap:"4px",alignItems:"flex-end",height:"50px"}}>
-                  {last7.map((d,i)=>{
-                    const maxH=Math.max(...last7.map(x=>x.activeHours),1);
-                    return (
-                      <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",height:"100%"}}>
-                        <div style={{width:"100%",background:"#60a5fa",borderRadius:"2px 2px 0 0",height:Math.max(d.activeHours>0?4:0,Math.round(d.activeHours/maxH*40))+"px"}}/>
-                        <div style={{fontSize:"8px",color:"#3a4a60",marginTop:"2px"}}>{d.activeHours>0?d.activeHours+"h":""}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              {last7.some(d=>d.hasTarget)&&(
-                <div>
-                  <div style={{fontSize:"10px",color:"#5a6880",marginBottom:"4px"}}>TARGET STATUS (last 7 days)</div>
-                  <div style={{display:"flex",gap:"4px"}}>
-                    {last7.map((d,i)=>(
-                      <div key={i} style={{flex:1,textAlign:"center",padding:"4px 0",borderRadius:"4px",background:!d.hasTarget?"#0a0a18":d.targetMet?"#0a2a0a":"#2a0a0a",fontSize:"9px",color:!d.hasTarget?"#2a2a45":d.targetMet?"#4ade80":"#f87171"}}>
-                        {!d.hasTarget?"-":d.targetMet?"Y":"N"}
-                      </div>
-                    ))}
+                    <div style={{fontSize:"8px",color:"#3a4a60"}}>{d.day}</div>
+                    {d.hasTarget&&<div style={{fontSize:"7px",color:d.targetMet?"#4ade80":"#f87171"}}>{d.targetMet?"✓":"○"}</div>}
                   </div>
-                </div>
-              )}
+                ))}
+              </div>
             </div>
           );
         })()}
+
         <div style={s.card}>
           <label style={s.lbl}>📊 Report Type</label>
-          <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap" }}>
-            {[["daily", "📅 Daily"], ["weekly", "📆 Weekly"], ["monthly", "🗓️ Monthly"]].map(([t, l]) => (
-              <button key={t} onClick={() => setReportType(t)} style={{ ...s.btn(reportType === t ? "purple" : "blue"), opacity: reportType === t ? 1 : 0.55 }}>{l}</button>
+          <div style={{display:"flex",gap:"6px",marginBottom:"12px",flexWrap:"wrap"}}>
+            {[["daily","📅 Daily"],["weekly","📆 Weekly"],["monthly","🗓️ Monthly"]].map(([t,l])=>(
+              <button key={t} onClick={()=>setReportType(t)} style={{...s.btn(reportType===t?"purple":"blue"),opacity:reportType===t?1:0.55}}>{l}</button>
             ))}
           </div>
-          <button style={{ ...s.btn("purple"), width: "100%", padding: "13px", fontSize: "13px" }} onClick={generateReport} disabled={reportLoading}>{reportLoading ? "🔄 Generate Ho Rahi Hai..." : "⚡ Report Generate Karo (1 Click)"}</button>
+          <button style={{...s.btn("purple"),width:"100%",padding:"12px",fontSize:"13px"}} onClick={generateReport} disabled={reportLoading}>{reportLoading?"🔄 Generate Ho Rahi Hai...":"⚡ Report Generate Karo"}</button>
         </div>
-        {reportOutput && <div style={s.card}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
-            <label style={s.lbl}>📋 {reportType.toUpperCase()} REPORT</label>
-            <div style={{ display: "flex", gap: "6px" }}>
-              <button style={s.btn("blue")} onClick={() => { const el = document.createElement("a"); el.href = "data:text/plain;charset=utf-8," + encodeURIComponent(reportOutput); el.download = `MBBS_${reportType}_${getToday()}.txt`; el.click(); }}>💾 .txt</button>
-              <button style={s.btn("green")} onClick={() => { const el = document.createElement("a"); const html = `<html><head><title>MBBS Report</title><style>body{font-family:monospace;background:#0a0a12;color:#c4b5fd;padding:24px;white-space:pre-wrap;line-height:1.8;}</style></head><body>${reportOutput}</body></html>`; el.href = "data:text/html;charset=utf-8," + encodeURIComponent(html); el.download = `MBBS_${reportType}_${getToday()}.html`; el.click(); }}>💾 .html</button>
+
+        {reportOutput&&<div style={s.card}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px",flexWrap:"wrap",gap:"8px"}}>
+            <label style={s.lbl}>{reportType.toUpperCase()} REPORT</label>
+            <div style={{display:"flex",gap:"6px"}}>
+              <button style={s.btn("blue")} onClick={()=>{const el=document.createElement("a");el.href="data:text/plain;charset=utf-8,"+encodeURIComponent(reportOutput);el.download=`MBBS_${reportType}_${getToday()}.txt`;el.click();}}>💾 .txt</button>
+              <button style={s.btn("green")} onClick={()=>{const el=document.createElement("a");const html=`<html><head><style>body{font-family:monospace;background:#0a0a12;color:#c4b5fd;padding:24px;white-space:pre-wrap;line-height:1.8;}</style></head><body>${reportOutput}</body></html>`;el.href="data:text/html;charset=utf-8,"+encodeURIComponent(html);el.download=`MBBS_${reportType}_${getToday()}.html`;el.click();}}>💾 .html</button>
             </div>
           </div>
           <div style={s.aiBox}>{reportOutput}</div>
         </div>}
       </div>}
 
-      {tab === 4 && <div style={s.page}>
+      {/* ━━ TAB 4: SETTINGS ━━ */}
+      {tab===4 && <div style={s.page}>
+        {/* Notification Settings */}
         <div style={s.card}>
-          <label style={s.lbl}>🔑 Gemini API Key (Required for AI)</label>
-          <p style={{fontSize:"11px", color:"#e87070", marginBottom:"8px", lineHeight:"1.6", background:"#2a0a0a", padding:"8px", borderRadius:"6px", border:"1px solid #5a1a1a"}}>
-            ⚠️ AI features ke liye Gemini key zaroori hai.<br/>
-            Free key lo: <b style={{color:"#60a5fa"}}>aistudio.google.com/apikey</b>
+          <label style={s.lbl}>🔔 Hourly Reminders</label>
+          <p style={{fontSize:"11px",color:"#5a8a5a",marginBottom:"10px",lineHeight:"1.6",background:"#0a1a0a",padding:"8px",borderRadius:"6px",border:"1px solid #1a3a1a"}}>
+            App khuli ho tab hourly pop-up reminder. Android Chrome mein background notifications bhi try karta hai.
           </p>
-          <input type="password" placeholder="AIzaSy..." value={apiKeyInput} onChange={e => setApiKeyInput(e.target.value)} style={{ ...s.inp, marginBottom: "10px" }} />
-          <button style={s.btn("green")} onClick={saveApiKey}>💾 Key Save Karo</button>
+          <div style={s.row}>
+            <div style={{flex:1}}>
+              <label style={s.lbl}>Wake-up Time</label>
+              <input type="time" value={wakeTime} onChange={e=>{setWakeTime(e.target.value);localStorage.setItem("wake_time",e.target.value);}} style={s.inp}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}>
+            {!notifEnabled
+              ? <button style={s.btn("green")} onClick={enableNotifications}>🔔 Notifications Enable Karo</button>
+              : <button style={s.btn("red")} onClick={()=>setNotifEnabled(false)}>🔕 Notifications Off Karo</button>
+            }
+            <button style={s.btn("blue")} onClick={()=>{setShowWakeSetup(true);}}>⏰ Kal ka Wake Time Set Karo</button>
+          </div>
+          {notifEnabled
+            ? <div style={{marginTop:"8px",fontSize:"11px",color:"#34d399"}}>✅ Notifications ON – {wakeTime} se hourly pop-ups aayenge</div>
+            : <div style={{marginTop:"8px",fontSize:"11px",color:"#f87171"}}>❌ Notifications OFF</div>
+          }
+          <div style={{marginTop:"8px",fontSize:"10px",color:"#4a5a70",background:"#070714",padding:"8px",borderRadius:"6px",border:"1px solid #1a1a30",lineHeight:"1.6"}}>
+            ⚠️ Background notifications: Android Chrome pe "Add to Home Screen" karke install karo → better chances. iOS pe kaam nahi karta.
+          </div>
+        </div>
+
+        <div style={s.card}>
+          <label style={s.lbl}>🔑 Gemini API Key</label>
+          <p style={{fontSize:"11px",color:"#e87070",marginBottom:"8px",lineHeight:"1.6",background:"#2a0a0a",padding:"8px",borderRadius:"6px",border:"1px solid #5a1a1a"}}>
+            ⚠️ Free key: <b style={{color:"#60a5fa"}}>aistudio.google.com/apikey</b>
+          </p>
+          <input type="password" placeholder="AIzaSy..." value={apiKeyInput} onChange={e=>setApiKeyInput(e.target.value)} style={{...s.inp,marginBottom:"10px"}}/>
+          <button style={s.btn("green")} onClick={saveApiKey}>💾 Save Key</button>
           {apiKey
-            ? <div style={{ marginTop: "8px", fontSize: "11px", color: "#34d399" }}>✅ Key saved! AI features ready.</div>
-            : <div style={{ marginTop: "8px", fontSize: "11px", color: "#f87171" }}>❌ Key nahi hai – AI kaam nahi karega</div>
+            ? <div style={{marginTop:"8px",fontSize:"11px",color:"#34d399"}}>✅ Key saved – AI ready</div>
+            : <div style={{marginTop:"8px",fontSize:"11px",color:"#f87171"}}>❌ Key nahi – AI kaam nahi karega</div>
           }
         </div>
+
         <div style={s.card}>
-          <label style={s.lbl}>19 Subjects - Complete Progress</label>
-          {(()=>{
-            const totalPg=Object.values(readingData).flat().reduce((a,e)=>a+e.pages,0);
-            const started=SUBJECTS.filter(sub=>Object.values(readingData).flat().some(e=>e.subject===sub)).length;
-            const totalQs=Object.values(qbankData).flat().reduce((a,e)=>a+e.total,0);
-            return (
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"6px",marginBottom:"12px"}}>
-                {[{l:"Total Pages",v:totalPg,col:"#4ade80"},{l:"Started",v:started+"/19",col:"#a78bfa"},{l:"QBank Qs",v:totalQs,col:"#60a5fa"}].map((x,idx)=>(
-                  <div key={idx} style={{background:"#070714",border:"1px solid #1c1c32",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
-                    <div style={{fontSize:"18px",fontWeight:700,color:x.col}}>{x.v}</div>
-                    <div style={{fontSize:"9px",color:"#3a4a60",marginTop:"2px"}}>{x.l}</div>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
+          <label style={s.lbl}>19 Subjects Progress</label>
           {SUBJECTS.map((subj,i)=>{
             const allE=Object.values(readingData).flat().filter(e=>e.subject===subj);
             const rp=allE.reduce((a,e)=>a+e.pages,0);
             const sessions=allE.length;
-            const avgR=sessions>0?(allE.reduce((a,e)=>a+e.rating,0)/sessions).toFixed(1):null;
             const lastRead=allE.length>0?allE.sort((a,b)=>b.date.localeCompare(a.date))[0].date:null;
-            const srcs=[...new Set(allE.map(e=>e.source))];
             const qd=Object.values(qbankData).flat().filter(e=>e.subject===subj);
             const qt=qd.reduce((a,e)=>a+e.total,0),qw=qd.reduce((a,e)=>a+e.wrong,0);
             const acc=qt?Math.round((1-qw/qt)*100):null;
@@ -837,56 +919,51 @@ Max 35 lines. Hindi/English mix. Be direct aur honest.`;
             const rcLabel=rc===0?"":rc===1?"1st":rc===2?"2nd":rc===3?"3rd":rc+"th";
             const maxPg=Math.max(...SUBJECTS.map(s=>Object.values(readingData).flat().filter(e=>e.subject===s).reduce((a,e)=>a+e.pages,0)),1);
             return (
-              <div key={subj} style={{borderBottom:"1px solid #111124",padding:"10px 0"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
+              <div key={subj} style={{borderBottom:"1px solid #111124",padding:"8px 0"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"3px"}}>
                   <span style={{fontSize:"12px",fontWeight:600,color:rp>0?"#c4b5fd":"#3a3a5a"}}>{i+1}. {subj}</span>
                   <div style={{display:"flex",gap:"4px",flexWrap:"wrap",justifyContent:"flex-end"}}>
                     {rp>0&&<span style={s.badge("green")}>{rp}pg</span>}
-                    {rc>0&&<span style={{...s.badge("blue"),color:"#c4b5fd",background:"#1a0a2e",border:"1px solid #5b21b6"}}>{rcLabel} read</span>}
+                    {rc>0&&<span style={{...s.badge("blue"),color:"#c4b5fd",background:"#1a0a2e",border:"1px solid #5b21b6"}}>{rcLabel}</span>}
                     {acc!==null?<span style={s.badge(acc>=70?"green":"red")}>{acc}%</span>:<span style={{color:"#252535",fontSize:"10px"}}>not started</span>}
                   </div>
                 </div>
-                {rp>0&&<div style={{height:"4px",borderRadius:"2px",background:"#1e1e35",marginBottom:"4px",overflow:"hidden"}}><div style={{height:"100%",width:Math.round(rp/maxPg*100)+"%",background:"linear-gradient(90deg,#7c3aed,#4ade80)",borderRadius:"2px"}}/></div>}
-                {rp>0&&(
-                  <div style={{display:"flex",gap:"8px",flexWrap:"wrap",fontSize:"10px",color:"#4a5a70"}}>
-                    {sessions>0&&<span>{sessions} sessions</span>}
-                    {avgR&&<span>avg {avgR}/5</span>}
-                    {srcs.length>0&&<span>{srcs.join(", ")}</span>}
-                    {lastRead&&<span>Last: {lastRead}</span>}
-                  </div>
-                )}
+                {rp>0&&<div style={{height:"3px",borderRadius:"2px",background:"#1e1e35",marginBottom:"3px",overflow:"hidden"}}><div style={{height:"100%",width:Math.round(rp/maxPg*100)+"%",background:"linear-gradient(90deg,#7c3aed,#4ade80)",borderRadius:"2px"}}/></div>}
+                {rp>0&&lastRead&&<div style={{fontSize:"10px",color:"#4a5a70"}}>{sessions} sessions • Last: {lastRead}</div>}
               </div>
             );
           })}
         </div>
+
         <div style={s.card}>
-          <label style={s.lbl}>Backup and Restore</label>
+          <label style={s.lbl}>💾 Backup & Restore</label>
           <p style={{fontSize:"11px",color:"#5a8a5a",marginBottom:"10px",lineHeight:"1.6",background:"#0a1a0a",padding:"8px",borderRadius:"6px",border:"1px solid #1a3a1a"}}>
             Data sirf is browser mein hai. Weekly backup lo!
           </p>
           <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"12px"}}>
-            <button style={{...s.btn("green"),padding:"11px 18px"}} onClick={exportData}>Export Backup (.json)</button>
-            <button style={{...s.btn("blue"),padding:"11px 18px"}} onClick={()=>importRef.current.click()}>Import Backup</button>
+            <button style={{...s.btn("green"),padding:"11px 18px"}} onClick={exportData}>📤 Export (.json)</button>
+            <button style={{...s.btn("blue"),padding:"11px 18px"}} onClick={()=>importRef.current.click()}>📥 Import</button>
             <input type="file" ref={importRef} accept=".json" style={{display:"none"}} onChange={importData}/>
           </div>
-          <label style={s.lbl}>Delete Data</label>
+          <label style={s.lbl}>🗑️ Delete Data</label>
           <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
             <button style={s.btn("red")} onClick={()=>{if(window.confirm("Daily logs delete?")){setLogs({});localStorage.removeItem("daily_logs");}}}>Daily</button>
             <button style={s.btn("red")} onClick={()=>{if(window.confirm("Reading data delete?")){setReadingData({});localStorage.removeItem("reading_data");}}}>Reading</button>
             <button style={s.btn("red")} onClick={()=>{if(window.confirm("QBank delete?")){setQbankData({});localStorage.removeItem("qbank_data");}}}>QBank</button>
           </div>
         </div>
-        <div style={{ ...s.card, textAlign: "center" }}>
-          <div style={{ fontSize: "28px", marginBottom: "6px" }}>🩺</div>
-          <div style={{ fontSize: "13px", color: "#6a7a98" }}>MedTracker Pro v2.0</div>
-          <div style={{ fontSize: "10px", color: "#353545", marginTop: "4px" }}>GitHub Pages Edition • No npm needed</div>
+
+        <div style={{...s.card,textAlign:"center"}}>
+          <div style={{fontSize:"28px",marginBottom:"6px"}}>🩺</div>
+          <div style={{fontSize:"13px",color:"#6a7a98"}}>MedTracker Pro v3.0</div>
+          <div style={{fontSize:"10px",color:"#353545",marginTop:"4px"}}>GitHub Pages • NEET PG Edition</div>
         </div>
       </div>}
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
