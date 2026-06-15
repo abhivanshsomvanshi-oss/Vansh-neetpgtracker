@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>MedTracker Pro – MBBS Study System</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"/>
+<link rel="manifest" href="/manifest.json"/>
+<meta name="theme-color" content="#7c3aed"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="MedTracker"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -43,97 +48,16 @@ const TABS=["📅 Daily","📖 Reading","🧪 QBank","📊 Reports","⚙️ Sett
 const isWeekend=()=>{const d=new Date().getDay();return d===0||d===6;};
 
 // ── SERVICE WORKER REGISTRATION ──
-const SW_CODE = `
-self.addEventListener('install', e => self.skipWaiting());
-self.addEventListener('activate', e => e.waitUntil(clients.claim()));
-
-// Background sync alarm check
-self.addEventListener('message', e => {
-  if(e.data && e.data.type === 'SCHEDULE_NOTIFS') {
-    const { wakeHour, slots } = e.data;
-    // Store schedule in SW scope
-    self.wakeHour = wakeHour;
-    self.scheduledSlots = slots;
-  }
-});
-
-// Periodic check via fetch event trick — use alarms via setInterval in SW
-let _timer = null;
-self.addEventListener('activate', () => {
-  if(_timer) clearInterval(_timer);
-  _timer = setInterval(() => {
-    const now = new Date();
-    const h = now.getHours(), m = now.getMinutes();
-    const wakeH = self.wakeHour || 8;
-    // Only fire at :00 to :05 each hour
-    if(m > 5) return;
-    if(h < wakeH) return;
-    // Check if app is open — if so, skip (app handles it itself)
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-      const appOpen = clientList.some(c => c.visibilityState === 'visible');
-      if(appOpen) return;
-      // App is closed/background — send notification
-      const slot = h + ':00';
-      const nextH = (h+1)%24;
-      const label = String(h).padStart(2,'0')+':00 – '+String(nextH).padStart(2,'0')+':00';
-      self.registration.showNotification('⏰ MedTracker – '+label, {
-        body: 'Kya kiya is ghante? App kholo aur fill karo! 📝',
-        icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🩺</text></svg>',
-        badge: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🩺</text></svg>',
-        tag: 'hourly-'+h,
-        renotify: true,
-        requireInteraction: true,
-        vibrate: [200, 100, 200],
-        data: { hour: h }
-      });
-    });
-  }, 60000);
-});
-
-// Midnight notification
-self.addEventListener('activate', () => {
-  setInterval(() => {
-    const now = new Date();
-    if(now.getHours() === 23 && now.getMinutes() >= 45 && now.getMinutes() <= 50) {
-      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-        const appOpen = clientList.some(c => c.visibilityState === 'visible');
-        if(appOpen) return;
-        self.registration.showNotification('🩺 MedTracker – Kal ka plan?', {
-          body: 'Kal ka wake-up time set karo! App kholo.',
-          icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🩺</text></svg>',
-          tag: 'midnight',
-          requireInteraction: true,
-          vibrate: [300, 100, 300]
-        });
-      });
-    }
-  }, 60000);
-});
-
-// Click on notification → open app
-self.addEventListener('notificationclick', e => {
-  e.notification.close();
-  e.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-      if(clientList.length > 0) return clientList[0].focus();
-      return clients.openWindow('/');
-    })
-  );
-});
-`;
-
 let _swReg = null;
+
 const registerSW = async () => {
   if(!('serviceWorker' in navigator)) return null;
   try {
-    // Create SW blob
-    const blob = new Blob([SW_CODE], { type: 'application/javascript' });
-    const swUrl = URL.createObjectURL(blob);
-    _swReg = await navigator.serviceWorker.register(swUrl, { scope: '/' });
-    console.log('[MedTracker] SW registered');
+    _swReg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    console.log('[MedTracker] SW registered:', _swReg.scope);
     return _swReg;
   } catch(err) {
-    console.warn('[MedTracker] SW failed:', err);
+    console.warn('[MedTracker] SW registration failed:', err);
     return null;
   }
 };
@@ -145,31 +69,39 @@ const requestNotifPermission = async () => {
   return p === "granted";
 };
 
-// Send via SW if available (works in background), fallback to Notification API
+// Send via SW (works in background), fallback to Notification API
 const sendBrowserNotif = (title, body) => {
   if(Notification.permission !== "granted") return;
   if(_swReg) {
     _swReg.showNotification(title, {
       body,
-      icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>",
+      icon: '/icon-192.png',
       tag: 'medtracker-manual',
       requireInteraction: true,
       vibrate: [200, 100, 200]
-    }).catch(() => {
-      new Notification(title, { body });
-    });
+    }).catch(() => new Notification(title, { body }));
   } else {
     new Notification(title, { body });
   }
 };
 
-const updateSWSchedule = (wakeHour) => {
-  if(!_swReg || !_swReg.active) return;
-  _swReg.active.postMessage({ type: 'SCHEDULE_NOTIFS', wakeHour });
+// App se SW ko schedule bhejo (wake time, sleep time, cheat days)
+const updateSWSchedule = (wakeHour, sleepHour, notifEnabled, cheatDays) => {
+  const sw = _swReg && (_swReg.active || _swReg.waiting || _swReg.installing);
+  if(!sw) return;
+  sw.postMessage({
+    type: 'SCHEDULE_UPDATE',
+    wakeHour: wakeHour ?? 8,
+    sleepHour: sleepHour ?? 1,
+    notifEnabled: notifEnabled ?? true,
+    cheatDays: cheatDays ?? {}
+  });
 };
 
 // Register SW on load
-registerSW();
+registerSW().then(reg => {
+  if(reg) console.log('[MedTracker] SW ready');
+});
 
 function App(){
   const [tab,setTab]=useState(0);
@@ -224,6 +156,17 @@ function App(){
   const [popupSlot,setPopupSlot]=useState(null);
   const [popupInput,setPopupInput]=useState("");
   const [wakeTime,setWakeTime]=useState(()=>localStorage.getItem("wake_time")||"08:00");
+  const [sleepTime,setSleepTime]=useState(()=>localStorage.getItem("sleep_time")||"01:00");
+
+  // Sync SW schedule whenever key state changes
+  const syncSW = (wake, sleep, notif, cheats) => {
+    setTimeout(()=>updateSWSchedule(
+      parseInt((wake||wakeTime).split(":")[0]),
+      parseInt((sleep||sleepTime).split(":")[0]),
+      notif??notifEnabled,
+      cheats??cheatDays
+    ), 500);
+  };
   const [notifEnabled,setNotifEnabled]=useState(()=>localStorage.getItem("notif_enabled")==="true");
   const [showWakeSetup,setShowWakeSetup]=useState(false);
   const [lastHourPrompted,setLastHourPrompted]=useState(()=>parseInt(localStorage.getItem("last_hour_prompted")||"-1"));
@@ -244,6 +187,11 @@ function App(){
   useEffect(()=>localStorage.setItem("daily_goals",JSON.stringify(goals)),[goals]);
   useEffect(()=>localStorage.setItem("read_counts",JSON.stringify(readCounts)),[readCounts]);
   useEffect(()=>localStorage.setItem("notif_enabled",notifEnabled),[notifEnabled]);
+  // Sync SW on mount — send current schedule to SW
+  useEffect(()=>{
+    if(notifEnabled) syncSW(wakeTime,sleepTime,true,cheatDays);
+  // eslint-disable-next-line
+  },[]);
   useEffect(()=>localStorage.setItem("last_hour_prompted",lastHourPrompted),[lastHourPrompted]);
   useEffect(()=>localStorage.setItem("cheat_days",JSON.stringify(cheatDays)),[cheatDays]);
   useEffect(()=>{chatEndRef.current?.scrollIntoView({behavior:"smooth"});},[chatMessages]);
@@ -261,10 +209,12 @@ function App(){
         sendBrowserNotif("🩺 MedTracker","Kal ka wake-up time set karo!");
       }
       if(h>=wakeH&&m<=7&&h!==lastHourPrompted&&!cheatDays[getToday()]){
-        const slot=TIME_SLOTS[h];
+        // h baje alarm baja → pichla slot (h-1 to h) fill karna hai
+        const prevH=h>0?h-1:23;
+        const slot=TIME_SLOTS[prevH];
         setPopupSlot(slot);setPopupInput("");setShowHourlyPopup(true);
         setLastHourPrompted(h);
-        sendBrowserNotif(`⏰ ${slot.label}`,"Kya kiya is ghante? Fill karo!");
+        sendBrowserNotif(`⏰ ${slot.label}`,"Kya kiya? Fill karo!");
       }
     };
     check();
@@ -349,11 +299,17 @@ function App(){
 
   // Declare cheat day
   const declareCheatDay=(date)=>{
-    setCheatDays(prev=>({...prev,[date]:true}));
+    const updated={...cheatDays,[date]:true};
+    setCheatDays(updated);
     setShowCheatConfirm(false);
+    syncSW(wakeTime,sleepTime,notifEnabled,updated);
     alert("🍕 Cheat day declared! Rest karo, kal full focus.");
   };
-  const revokeCheatDay=(date)=>setCheatDays(prev=>{const n={...prev};delete n[date];return n;});
+  const revokeCheatDay=(date)=>{
+    const updated={...cheatDays};delete updated[date];
+    setCheatDays(updated);
+    syncSW(wakeTime,sleepTime,notifEnabled,updated);
+  };
 
   // Can suggest cheat day?
   const canSuggestCheat=(date)=>{
@@ -602,17 +558,15 @@ Max 40 lines. Direct. Hinglish.`;
     const granted=await requestNotifPermission();
     if(granted){
       setNotifEnabled(true);
-      // Register SW and send wake time
       const reg = await registerSW();
       if(reg) {
-        // Wait for SW to activate then send schedule
-        setTimeout(()=>updateSWSchedule(parseInt(wakeTime.split(":")[0])), 1500);
-        alert("✅ Notifications ON!\n\nAb app band hone pe bhi notifications aayengi.\n\nImportant: Chrome settings mein 'Background Activity' allow karo is site ke liye.");
+        syncSW(wakeTime, sleepTime, true, cheatDays);
+        alert("✅ Notifications ON!\n\nAb app band hone pe bhi aayengi!\n\nSettings mein Sleep Time bhi set karo.");
       } else {
         alert("✅ Notifications ON! (App open rehni chahiye background mein)");
       }
     } else {
-      alert("❌ Permission denied.\n\nChrome → Settings → Site Settings → Notifications → is site ke liye Allow karo.");
+      alert("❌ Permission denied.\n\nChrome → Settings → Site Settings → Notifications → Allow karo.");
     }
   };
 
@@ -1153,7 +1107,11 @@ Max 40 lines. Direct. Hinglish.`;
           <label style={s.lbl}>🔔 Hourly Reminders</label>
           <div style={{marginBottom:"8px"}}>
             <label style={s.lbl}>Wake-up Time (reminders isi se start honge)</label>
-            <input type="time" value={wakeTime} onChange={e=>{const v=e.target.value;setWakeTime(v);localStorage.setItem("wake_time",v);updateSWSchedule(parseInt(v.split(":")[0]));}} style={s.inp}/>
+            <input type="time" value={wakeTime} onChange={e=>{const v=e.target.value;setWakeTime(v);localStorage.setItem("wake_time",v);syncSW(v,sleepTime,notifEnabled,cheatDays);}} style={s.inp}/>
+          </div>
+          <div style={{marginBottom:"8px"}}>
+            <label style={s.lbl}>🌙 Sleep Time (notifications band hojayengi)</label>
+            <input type="time" value={sleepTime} onChange={e=>{const v=e.target.value;setSleepTime(v);localStorage.setItem("sleep_time",v);syncSW(wakeTime,v,notifEnabled,cheatDays);}} style={s.inp}/>
           </div>
           <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"8px"}}>
             {!notifEnabled
