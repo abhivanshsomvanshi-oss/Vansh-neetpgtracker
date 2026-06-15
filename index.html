@@ -5,11 +5,39 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>MedTracker Pro – MBBS Study System</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"/>
-<link rel="manifest" href="/Vansh-neetpgtracker/manifest.json"/>
 <meta name="theme-color" content="#7c3aed"/>
+<meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="MedTracker"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+<script>
+// ── INLINE MANIFEST (no separate file needed) ──
+(function(){
+  const manifest = {
+    name: "MedTracker Pro",
+    short_name: "MedTracker",
+    description: "NEET PG Daily Study Tracker",
+    start_url: window.location.href.split('?')[0],
+    scope: window.location.pathname.replace(/\/[^\/]*$/, '/') || '/',
+    display: "standalone",
+    background_color: "#0a0a12",
+    theme_color: "#7c3aed",
+    orientation: "portrait-primary",
+    prefer_related_applications: false,
+    icons: [
+      { src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+      { src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+    ]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], {type:'application/manifest+json'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('link');
+  link.rel = 'manifest';
+  link.href = url;
+  document.head.appendChild(link);
+})();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -47,18 +75,91 @@ const getToday=()=>new Date().toISOString().split("T")[0];
 const TABS=["📅 Daily","📖 Reading","🧪 QBank","📊 Reports","⚙️ Settings"];
 const isWeekend=()=>{const d=new Date().getDay();return d===0||d===6;};
 
-// ── SERVICE WORKER REGISTRATION ──
+// ── SERVICE WORKER — FULLY INLINE (no sw.js file needed) ──
 let _swReg = null;
+
+const SW_SOURCE = `
+const DB_NAME = 'medtracker-sw-db';
+function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,1);r.onupgradeneeded=e=>e.target.result.createObjectStore('s',{keyPath:'k'});r.onsuccess=e=>res(e.target.result);r.onerror=()=>rej(r.error);});}
+async function dbGet(k){try{const db=await openDB();return new Promise(res=>{const r=db.transaction('s','readonly').objectStore('s').get(k);r.onsuccess=()=>res(r.result?r.result.v:null);r.onerror=()=>res(null);});}catch{return null;}}
+async function dbSet(k,v){try{const db=await openDB();return new Promise(res=>{const tx=db.transaction('s','readwrite');tx.objectStore('s').put({k,v});tx.oncomplete=res;tx.onerror=res;});}catch{}}
+self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',e=>{e.waitUntil(clients.claim().then(()=>scheduleCheck()));});
+self.addEventListener('message',async e=>{
+  if(!e.data)return;
+  if(e.data.type==='SCHEDULE_UPDATE'){
+    await dbSet('wakeHour',e.data.wakeHour??8);
+    await dbSet('sleepHour',e.data.sleepHour??1);
+    await dbSet('notifEnabled',e.data.notifEnabled??true);
+    await dbSet('cheatDays',e.data.cheatDays??{});
+    const cl=await clients.matchAll({type:'window'});
+    cl.forEach(c=>c.postMessage({type:'SW_READY'}));
+  }
+});
+function scheduleCheck(){
+  const now=new Date();
+  const ms=(60-now.getSeconds())*1000-now.getMilliseconds()+500;
+  setTimeout(async()=>{await doCheck();scheduleCheck();},ms);
+}
+async function doCheck(){
+  const now=new Date();
+  const h=now.getHours(),m=now.getMinutes();
+  if(m>3)return;
+  const wakeH=(await dbGet('wakeHour'))??8;
+  const sleepH=(await dbGet('sleepHour'))??1;
+  const enabled=(await dbGet('notifEnabled'))??false;
+  const cheats=(await dbGet('cheatDays'))??{};
+  const last=(await dbGet('lastH'))??-1;
+  if(!enabled)return;
+  const today=new Date().toISOString().split('T')[0];
+  if(cheats[today])return;
+  if(h===last)return;
+  const active=sleepH<wakeH?(h>=wakeH||h<sleepH):(h>=wakeH&&h<sleepH);
+  if(!active)return;
+  await dbSet('lastH',h);
+  const cl=await clients.matchAll({type:'window',includeUncontrolled:true});
+  if(cl.some(c=>c.visibilityState==='visible'))return;
+  const pH=(h-1+24)%24;
+  const lbl=String(pH).padStart(2,'0')+':00 – '+String(h).padStart(2,'0')+':00';
+  self.registration.showNotification('⏰ '+lbl+' | MedTracker',{
+    body:'Kya kiya is ghante? Tap karo aur fill karo! 📝',
+    icon:'https://abhivanshsomvanshi-oss.github.io/Vansh-neetpgtracker/icon-192.png',
+    badge:'https://abhivanshsomvanshi-oss.github.io/Vansh-neetpgtracker/icon-192.png',
+    tag:'hourly-log',renotify:true,requireInteraction:true,
+    vibrate:[200,100,200,100,400],
+    data:{url:'https://abhivanshsomvanshi-oss.github.io/Vansh-neetpgtracker/'}
+  });
+}
+self.addEventListener('notificationclick',e=>{
+  e.notification.close();
+  const url=(e.notification.data&&e.notification.data.url)||'https://abhivanshsomvanshi-oss.github.io/Vansh-neetpgtracker/';
+  e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(cl=>{
+    for(const c of cl){if('focus' in c)return c.focus();}
+    return clients.openWindow(url);
+  }));
+});
+`;
 
 const registerSW = async () => {
   if(!('serviceWorker' in navigator)) return null;
   try {
-    _swReg = await navigator.serviceWorker.register('/Vansh-neetpgtracker/sw.js', { scope: '/Vansh-neetpgtracker/' });
-    console.log('[MedTracker] SW registered:', _swReg.scope);
+    // Create SW from blob — works without separate sw.js file
+    const blob = new Blob([SW_SOURCE], {type: 'application/javascript'});
+    const swUrl = URL.createObjectURL(blob);
+    _swReg = await navigator.serviceWorker.register(swUrl);
+    console.log('[MedTracker] SW registered via blob');
     return _swReg;
   } catch(err) {
-    console.warn('[MedTracker] SW registration failed:', err);
-    return null;
+    console.warn('[MedTracker] SW blob failed:', err.message);
+    // Fallback: try sw.js file
+    try {
+      _swReg = await navigator.serviceWorker.register('./sw.js');
+      console.log('[MedTracker] SW registered via file');
+      return _swReg;
+    } catch(err2) {
+      console.warn('[MedTracker] SW file also failed:', err2.message);
+      return null;
+    }
   }
 };
 
@@ -69,25 +170,25 @@ const requestNotifPermission = async () => {
   return p === "granted";
 };
 
-// Send via SW (works in background), fallback to Notification API
 const sendBrowserNotif = (title, body) => {
-  if(Notification.permission !== "granted") return;
-  if(_swReg) {
+  if(Notification.permission !== "granted"){
+    alert("Pehle notifications enable karo Settings mein!");
+    return;
+  }
+  if(_swReg && _swReg.active) {
     _swReg.showNotification(title, {
       body,
-      icon: '/Vansh-neetpgtracker/icon-192.png',
-      tag: 'medtracker-manual',
+      icon: 'https://abhivanshsomvanshi-oss.github.io/Vansh-neetpgtracker/icon-192.png',
+      tag: 'test-notif',
       requireInteraction: true,
       vibrate: [200, 100, 200]
-    }).catch(() => new Notification(title, { body }));
+    }).catch(() => new Notification(title, {body}));
   } else {
-    new Notification(title, { body });
+    new Notification(title, {body});
   }
 };
 
-// App se SW ko schedule bhejo — IndexedDB mein save hoga
 const updateSWSchedule = async (wakeHour, sleepHour, notifEnabled, cheatDays) => {
-  // Try via navigator.serviceWorker.controller first
   const payload = {
     type: 'SCHEDULE_UPDATE',
     wakeHour: wakeHour ?? 8,
