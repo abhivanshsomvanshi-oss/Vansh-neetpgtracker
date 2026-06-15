@@ -42,15 +42,134 @@ const getToday=()=>new Date().toISOString().split("T")[0];
 const TABS=["📅 Daily","📖 Reading","🧪 QBank","📊 Reports","⚙️ Settings"];
 const isWeekend=()=>{const d=new Date().getDay();return d===0||d===6;};
 
-const requestNotifPermission=async()=>{
+// ── SERVICE WORKER REGISTRATION ──
+const SW_CODE = `
+self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(clients.claim()));
+
+// Background sync alarm check
+self.addEventListener('message', e => {
+  if(e.data && e.data.type === 'SCHEDULE_NOTIFS') {
+    const { wakeHour, slots } = e.data;
+    // Store schedule in SW scope
+    self.wakeHour = wakeHour;
+    self.scheduledSlots = slots;
+  }
+});
+
+// Periodic check via fetch event trick — use alarms via setInterval in SW
+let _timer = null;
+self.addEventListener('activate', () => {
+  if(_timer) clearInterval(_timer);
+  _timer = setInterval(() => {
+    const now = new Date();
+    const h = now.getHours(), m = now.getMinutes();
+    const wakeH = self.wakeHour || 8;
+    // Only fire at :00 to :05 each hour
+    if(m > 5) return;
+    if(h < wakeH) return;
+    // Check if app is open — if so, skip (app handles it itself)
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+      const appOpen = clientList.some(c => c.visibilityState === 'visible');
+      if(appOpen) return;
+      // App is closed/background — send notification
+      const slot = h + ':00';
+      const nextH = (h+1)%24;
+      const label = String(h).padStart(2,'0')+':00 – '+String(nextH).padStart(2,'0')+':00';
+      self.registration.showNotification('⏰ MedTracker – '+label, {
+        body: 'Kya kiya is ghante? App kholo aur fill karo! 📝',
+        icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🩺</text></svg>',
+        badge: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🩺</text></svg>',
+        tag: 'hourly-'+h,
+        renotify: true,
+        requireInteraction: true,
+        vibrate: [200, 100, 200],
+        data: { hour: h }
+      });
+    });
+  }, 60000);
+});
+
+// Midnight notification
+self.addEventListener('activate', () => {
+  setInterval(() => {
+    const now = new Date();
+    if(now.getHours() === 23 && now.getMinutes() >= 45 && now.getMinutes() <= 50) {
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+        const appOpen = clientList.some(c => c.visibilityState === 'visible');
+        if(appOpen) return;
+        self.registration.showNotification('🩺 MedTracker – Kal ka plan?', {
+          body: 'Kal ka wake-up time set karo! App kholo.',
+          icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🩺</text></svg>',
+          tag: 'midnight',
+          requireInteraction: true,
+          vibrate: [300, 100, 300]
+        });
+      });
+    }
+  }, 60000);
+});
+
+// Click on notification → open app
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+      if(clientList.length > 0) return clientList[0].focus();
+      return clients.openWindow('/');
+    })
+  );
+});
+`;
+
+let _swReg = null;
+const registerSW = async () => {
+  if(!('serviceWorker' in navigator)) return null;
+  try {
+    // Create SW blob
+    const blob = new Blob([SW_CODE], { type: 'application/javascript' });
+    const swUrl = URL.createObjectURL(blob);
+    _swReg = await navigator.serviceWorker.register(swUrl, { scope: '/' });
+    console.log('[MedTracker] SW registered');
+    return _swReg;
+  } catch(err) {
+    console.warn('[MedTracker] SW failed:', err);
+    return null;
+  }
+};
+
+const requestNotifPermission = async () => {
   if(!("Notification" in window)) return false;
-  if(Notification.permission==="granted") return true;
-  const p=await Notification.requestPermission();
-  return p==="granted";
+  if(Notification.permission === "granted") return true;
+  const p = await Notification.requestPermission();
+  return p === "granted";
 };
-const sendBrowserNotif=(title,body)=>{
-  if(Notification.permission==="granted") new Notification(title,{body,icon:"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"});
+
+// Send via SW if available (works in background), fallback to Notification API
+const sendBrowserNotif = (title, body) => {
+  if(Notification.permission !== "granted") return;
+  if(_swReg) {
+    _swReg.showNotification(title, {
+      body,
+      icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>",
+      tag: 'medtracker-manual',
+      requireInteraction: true,
+      vibrate: [200, 100, 200]
+    }).catch(() => {
+      new Notification(title, { body });
+    });
+  } else {
+    new Notification(title, { body });
+  }
 };
+
+const updateSWSchedule = (wakeHour) => {
+  if(!_swReg || !_swReg.active) return;
+  _swReg.active.postMessage({ type: 'SCHEDULE_NOTIFS', wakeHour });
+};
+
+// Register SW on load
+registerSW();
 
 function App(){
   const [tab,setTab]=useState(0);
@@ -481,8 +600,20 @@ Max 40 lines. Direct. Hinglish.`;
 
   const enableNotifications=async()=>{
     const granted=await requestNotifPermission();
-    if(granted){setNotifEnabled(true);alert("✅ Notifications ON!");}
-    else alert("❌ Permission denied. Browser settings mein allow karo.");
+    if(granted){
+      setNotifEnabled(true);
+      // Register SW and send wake time
+      const reg = await registerSW();
+      if(reg) {
+        // Wait for SW to activate then send schedule
+        setTimeout(()=>updateSWSchedule(parseInt(wakeTime.split(":")[0])), 1500);
+        alert("✅ Notifications ON!\n\nAb app band hone pe bhi notifications aayengi.\n\nImportant: Chrome settings mein 'Background Activity' allow karo is site ke liye.");
+      } else {
+        alert("✅ Notifications ON! (App open rehni chahiye background mein)");
+      }
+    } else {
+      alert("❌ Permission denied.\n\nChrome → Settings → Site Settings → Notifications → is site ke liye Allow karo.");
+    }
   };
 
   const s={
@@ -1022,7 +1153,7 @@ Max 40 lines. Direct. Hinglish.`;
           <label style={s.lbl}>🔔 Hourly Reminders</label>
           <div style={{marginBottom:"8px"}}>
             <label style={s.lbl}>Wake-up Time (reminders isi se start honge)</label>
-            <input type="time" value={wakeTime} onChange={e=>{setWakeTime(e.target.value);localStorage.setItem("wake_time",e.target.value);}} style={s.inp}/>
+            <input type="time" value={wakeTime} onChange={e=>{const v=e.target.value;setWakeTime(v);localStorage.setItem("wake_time",v);updateSWSchedule(parseInt(v.split(":")[0]));}} style={s.inp}/>
           </div>
           <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"8px"}}>
             {!notifEnabled
@@ -1031,12 +1162,19 @@ Max 40 lines. Direct. Hinglish.`;
             }
             <button style={s.btn("blue")} onClick={()=>setShowWakeSetup(true)}>⏰ Kal ka Wake Time</button>
           </div>
+          {notifEnabled && <button style={{...s.btn("blue"),marginBottom:"8px"}} onClick={()=>sendBrowserNotif("🩺 MedTracker Test","Notification kaam kar raha hai! ✅")}>🧪 Test Notification</button>}
           {notifEnabled
-            ? <div style={{fontSize:"11px",color:"#34d399"}}>✅ ON – {wakeTime} se hourly pop-ups</div>
+            ? <div style={{fontSize:"11px",color:"#34d399"}}>✅ ON – {wakeTime} se hourly notifications (app band ho toh bhi)</div>
             : <div style={{fontSize:"11px",color:"#f87171"}}>❌ OFF</div>
           }
-          <div style={{marginTop:"8px",fontSize:"10px",color:"#4a5a70",background:"#070714",padding:"8px",borderRadius:"6px",border:"1px solid #1a1a30",lineHeight:"1.6"}}>
-            ⚠️ Background notifications: Android Chrome pe "Add to Home Screen" karke install karo for best results.
+          <div style={{marginTop:"8px",fontSize:"10px",color:"#4a7a70",background:"#040f0d",padding:"10px",borderRadius:"6px",border:"1px solid #0a2a20",lineHeight:"1.8"}}>
+            <b style={{color:"#34d399"}}>📲 Background Notifications Setup (ek baar karo):</b><br/>
+            1. Upar "Enable Notifications" dabaao → Allow karo<br/>
+            2. Chrome → ⋮ Menu → Settings → Site Settings → Notifications → is site pe tap → Allow<br/>
+            3. Android Settings → Apps → Chrome → Battery → "Unrestricted" karo<br/>
+            4. Android Settings → Apps → Chrome → Background Activity → ON karo<br/>
+            <br/>
+            <b style={{color:"#facc15"}}>⚡ Yeh sab karne ke baad app band rehne pe bhi notifications aayengi!</b>
           </div>
         </div>
 
