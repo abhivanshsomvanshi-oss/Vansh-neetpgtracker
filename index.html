@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>MedTracker Pro – MBBS Study System</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"/>
-<link rel="manifest" href="/manifest.json"/>
+<link rel="manifest" href="/Vansh-neetpgtracker/manifest.json"/>
 <meta name="theme-color" content="#7c3aed"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
@@ -53,7 +53,7 @@ let _swReg = null;
 const registerSW = async () => {
   if(!('serviceWorker' in navigator)) return null;
   try {
-    _swReg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    _swReg = await navigator.serviceWorker.register('/Vansh-neetpgtracker/sw.js', { scope: '/Vansh-neetpgtracker/' });
     console.log('[MedTracker] SW registered:', _swReg.scope);
     return _swReg;
   } catch(err) {
@@ -75,7 +75,7 @@ const sendBrowserNotif = (title, body) => {
   if(_swReg) {
     _swReg.showNotification(title, {
       body,
-      icon: '/icon-192.png',
+      icon: '/Vansh-neetpgtracker/icon-192.png',
       tag: 'medtracker-manual',
       requireInteraction: true,
       vibrate: [200, 100, 200]
@@ -85,17 +85,22 @@ const sendBrowserNotif = (title, body) => {
   }
 };
 
-// App se SW ko schedule bhejo (wake time, sleep time, cheat days)
-const updateSWSchedule = (wakeHour, sleepHour, notifEnabled, cheatDays) => {
-  const sw = _swReg && (_swReg.active || _swReg.waiting || _swReg.installing);
-  if(!sw) return;
-  sw.postMessage({
+// App se SW ko schedule bhejo — IndexedDB mein save hoga
+const updateSWSchedule = async (wakeHour, sleepHour, notifEnabled, cheatDays) => {
+  // Try via navigator.serviceWorker.controller first
+  const payload = {
     type: 'SCHEDULE_UPDATE',
     wakeHour: wakeHour ?? 8,
     sleepHour: sleepHour ?? 1,
     notifEnabled: notifEnabled ?? true,
     cheatDays: cheatDays ?? {}
-  });
+  };
+  if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage(payload);
+  } else if (_swReg) {
+    const sw = _swReg.active || _swReg.waiting || _swReg.installing;
+    if (sw) sw.postMessage(payload);
+  }
 };
 
 // Register SW on load
@@ -160,12 +165,12 @@ function App(){
 
   // Sync SW schedule whenever key state changes
   const syncSW = (wake, sleep, notif, cheats) => {
-    setTimeout(()=>updateSWSchedule(
+    updateSWSchedule(
       parseInt((wake||wakeTime).split(":")[0]),
       parseInt((sleep||sleepTime).split(":")[0]),
       notif??notifEnabled,
       cheats??cheatDays
-    ), 500);
+    );
   };
   const [notifEnabled,setNotifEnabled]=useState(()=>localStorage.getItem("notif_enabled")==="true");
   const [showWakeSetup,setShowWakeSetup]=useState(false);
@@ -556,18 +561,34 @@ Max 40 lines. Direct. Hinglish.`;
 
   const enableNotifications=async()=>{
     const granted=await requestNotifPermission();
-    if(granted){
-      setNotifEnabled(true);
-      const reg = await registerSW();
-      if(reg) {
-        syncSW(wakeTime, sleepTime, true, cheatDays);
-        alert("✅ Notifications ON!\n\nAb app band hone pe bhi aayengi!\n\nSettings mein Sleep Time bhi set karo.");
-      } else {
-        alert("✅ Notifications ON! (App open rehni chahiye background mein)");
-      }
-    } else {
+    if(!granted){
       alert("❌ Permission denied.\n\nChrome → Settings → Site Settings → Notifications → Allow karo.");
+      return;
     }
+    setNotifEnabled(true);
+    // Register SW
+    const reg = await registerSW();
+    if(!reg){ alert("✅ ON! (App open rakhna background mein)"); return; }
+
+    // Wait for SW to activate (max 3 sec)
+    await new Promise(resolve => {
+      if(reg.active){ resolve(); return; }
+      const sw = reg.installing || reg.waiting;
+      if(!sw){ resolve(); return; }
+      sw.addEventListener('statechange', function handler(){
+        if(sw.state === 'activated'){ sw.removeEventListener('statechange', handler); resolve(); }
+      });
+      setTimeout(resolve, 3000);
+    });
+
+    // Now send schedule
+    await updateSWSchedule(
+      parseInt(wakeTime.split(":")[0]),
+      parseInt(sleepTime.split(":")[0]),
+      true,
+      cheatDays
+    );
+    alert("✅ Notifications ON!\n\nAb app band hone pe bhi aayengi! 🎉\n\n📌 Ek kaam zaroor karo:\nAndroid Settings → Apps → Chrome → Battery → Unrestricted karo");
   };
 
   const s={
